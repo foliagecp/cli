@@ -8,17 +8,17 @@ import (
 	"strings"
 )
 
-func JSONStrPrettyStringAnyway(str string) string {
-	ppStr, err := JSONStrPrettyString(str)
+func JSONStrPrettyStringAnyway(str, prefix, indent string) string {
+	ppStr, err := JSONStrPrettyString(str, prefix, indent)
 	if err != nil {
 		return str
 	}
 	return ppStr
 }
 
-func JSONStrPrettyString(str string) (string, error) {
+func JSONStrPrettyString(str, prefix, indent string) (string, error) {
 	var prettyJSON bytes.Buffer
-	if err := json.Indent(&prettyJSON, []byte(str), "", "    "); err != nil {
+	if err := json.Indent(&prettyJSON, []byte(str), prefix, indent); err != nil {
 		return "", err
 	}
 	return prettyJSON.String(), nil

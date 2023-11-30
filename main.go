@@ -59,17 +59,43 @@ func main() {
 					{
 						Name:  "routes",
 						Usage: "find all existing routes",
+						Flags: []cli.Flag{
+							&cli.IntFlag{
+								Name:    "forward_depth",
+								Aliases: []string{"fd"},
+								Value:   1,
+								Usage:   "Forward depth",
+							},
+							&cli.IntFlag{
+								Name:    "backward_depth",
+								Aliases: []string{"bd"},
+								Value:   0,
+								Usage:   "Backward depth",
+							},
+							&cli.IntFlag{
+								Name:    "verbose",
+								Aliases: []string{"v"},
+								Value:   0,
+								Usage:   "Level of details (0 - just links, 1 - links types, 2 - link types and tags)",
+							},
+						},
 						Action: func(cCtx *cli.Context) error {
-							fmt.Println("removed task template: ", cCtx.Args().First())
-							return nil
+							return gWalkRoutes(cCtx.Int("fd"), cCtx.Int("bd"), cCtx.Int("v"))
 						},
 					},
 					{
 						Name:  "inspect",
 						Usage: "show detailed info about current location",
+						Flags: []cli.Flag{
+							&cli.BoolFlag{
+								Name:    "pretty_print",
+								Aliases: []string{"p"},
+								Value:   false,
+								Usage:   "JSON pretty print",
+							},
+						},
 						Action: func(cCtx *cli.Context) error {
-							fmt.Println("removed task template: ", cCtx.Args().First())
-							return nil
+							return gWalkInspect(cCtx.Bool("p"))
 						},
 					},
 					{
@@ -78,13 +104,14 @@ func main() {
 						ArgsUsage: "<JPGQL query>",
 						Flags: []cli.Flag{
 							&cli.StringFlag{
-								Name:  "alg",
-								Value: "dcra",
-								Usage: "JPGQL algorithm: <dcra|ctra>. Call Tree Result Aggregation or Direct Cache Result Aggregation",
+								Name:    "algorithm",
+								Aliases: []string{"a"},
+								Value:   "dcra",
+								Usage:   "JPGQL algorithm: <dcra|ctra>. Call Tree Result Aggregation or Direct Cache Result Aggregation",
 							},
 						},
 						Action: func(cCtx *cli.Context) error {
-							s := cCtx.String("alg")
+							s := cCtx.String("a")
 							algorithm := "dcra"
 							if s != "ctra" && s != "dcra" {
 								fmt.Printf("Invalig JPGQL algorithm specified %s, required <dcra|ctra>. Will use %s as the default one.\n", s, algorithm)
