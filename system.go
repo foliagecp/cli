@@ -1,27 +1,35 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"os/user"
 	"path/filepath"
 	"strings"
+
+	"github.com/TylerBrock/colorjson"
+	"github.com/foliagecp/easyjson"
 )
 
-func JSONStrPrettyStringAnyway(str, prefix, indent string) string {
-	ppStr, err := JSONStrPrettyString(str, prefix, indent)
+func JSONStrPrettyStringAnyway(j *easyjson.JSON, everyLineIndent int, innerIndent int) string {
+	ppStr, err := JSONStrPrettyString(j, everyLineIndent, innerIndent)
 	if err != nil {
-		return str
+		return ppStr
 	}
 	return ppStr
 }
 
-func JSONStrPrettyString(str, prefix, indent string) (string, error) {
-	var prettyJSON bytes.Buffer
-	if err := json.Indent(&prettyJSON, []byte(str), prefix, indent); err != nil {
+func JSONStrPrettyString(j *easyjson.JSON, everyLineIndent int, innerIndent int) (string, error) {
+	f := colorjson.NewFormatter()
+	f.Indent = innerIndent
+	s, err := f.Marshal(j.Value)
+	if err != nil {
 		return "", err
 	}
-	return prettyJSON.String(), nil
+	pi := ""
+	for i := 0; i < everyLineIndent; i++ {
+		pi += " "
+	}
+	res := strings.ReplaceAll(string(s), "\n", "\n"+pi)
+	return res, nil
 }
 
 func expandFileName(fileName string) (string, error) {

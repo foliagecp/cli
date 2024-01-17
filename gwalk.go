@@ -77,9 +77,9 @@ func gWalkInspect(prettyPrint bool) error {
 	fmt.Println("Body")
 	if body.IsNonEmptyObject() {
 		if prettyPrint {
-			fmt.Println(prefixIndent, JSONStrPrettyStringAnyway(body.ToString(), prefixIndent, "  "))
+			fmt.Println(prefixIndent + JSONStrPrettyStringAnyway(&body, len(prefixIndent), 2))
 		} else {
-			fmt.Println(body.ToString(), prefixIndent, "  ")
+			fmt.Println(prefixIndent, body.ToString())
 		}
 	} else {
 		fmt.Println(prefixIndent, "-")
@@ -94,21 +94,21 @@ func gWalkInspect(prettyPrint bool) error {
 			outputLink := outputLinks.ArrayElement(i)
 			if outputLink.IsNonEmptyObject() {
 				id := outputLink.GetByPath("id").AsStringDefault("???")
-				fmt.Println(prefixIndent, "To: ", id)
+				fmt.Println(prefixIndent+"To: ", id)
 
 				t := outputLink.GetByPath("type").AsStringDefault("???")
-				fmt.Println(prefixIndent, "Type: ", t)
+				fmt.Println(prefixIndent+"Type: ", t)
 
 				if tags, ok := outputLink.GetByPath("tags").AsArrayString(); ok {
-					fmt.Println(prefixIndent, "Tags: ", strings.Join(tags, " "))
+					fmt.Println(prefixIndent+"Tags: ", strings.Join(tags, " "))
 				} else {
-					fmt.Println(prefixIndent, "Tags: -")
+					fmt.Println(prefixIndent + "Tags: -")
 				}
 
 				linkBody := outputLink.GetByPath("body")
 				if body.IsNonEmptyObject() {
 					if prettyPrint {
-						fmt.Printf("%s Body: %s\n", prefixIndent, JSONStrPrettyStringAnyway(linkBody.ToString(), prefixIndent+"  ", "  "))
+						fmt.Printf("%sBody: %s\n", prefixIndent, JSONStrPrettyStringAnyway(&linkBody, len(prefixIndent)*2, 2))
 					} else {
 						fmt.Println(prefixIndent, "Body: ", linkBody.ToString())
 					}
@@ -128,21 +128,21 @@ func gWalkInspect(prettyPrint bool) error {
 			inputLink := inputLinks.ArrayElement(i)
 			if inputLink.IsNonEmptyObject() {
 				id := inputLink.GetByPath("id").AsStringDefault("???")
-				fmt.Println(prefixIndent, "From: ", id)
+				fmt.Println(prefixIndent+"From: ", id)
 
 				t := inputLink.GetByPath("type").AsStringDefault("???")
-				fmt.Println(prefixIndent, "Type: ", t)
+				fmt.Println(prefixIndent+"Type: ", t)
 
 				if tags, ok := inputLink.GetByPath("tags").AsArrayString(); ok {
-					fmt.Println(prefixIndent, "Tags: ", strings.Join(tags, " "))
+					fmt.Println(prefixIndent+"Tags: ", strings.Join(tags, " "))
 				} else {
-					fmt.Println(prefixIndent, "Tags: -")
+					fmt.Println(prefixIndent + "Tags: -")
 				}
 
 				linkBody := inputLink.GetByPath("body")
 				if body.IsNonEmptyObject() {
 					if prettyPrint {
-						fmt.Printf("%s Body: %s\n", prefixIndent, JSONStrPrettyStringAnyway(linkBody.ToString(), prefixIndent+"  ", "  "))
+						fmt.Printf("%sBody: %s\n", prefixIndent, JSONStrPrettyStringAnyway(&linkBody, len(prefixIndent)*2, 2))
 					} else {
 						fmt.Println(prefixIndent, "Body: ", linkBody.ToString())
 					}
@@ -238,7 +238,7 @@ func gWalkRoutes(fd, bd int, verbose int) error {
 	fmt.Println(tree.String())
 	// ----------------------------------------------------------------------------------
 
-	//fmt.Println(JSONStrPrettyStringAnyway(routesJson.ToString()))
+	//fmt.Println(JSONStrPrettyStringAnyway(routesJson, 2))
 	return nil
 }
 
