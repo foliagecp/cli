@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/foliagecp/easyjson"
+	sfMediators "github.com/foliagecp/sdk/statefun/mediator"
 )
 
 func buildNatsData(callerTypename string, callerID string, payload *easyjson.JSON, options *easyjson.JSON) []byte {
@@ -20,15 +21,16 @@ func buildNatsData(callerTypename string, callerID string, payload *easyjson.JSO
 	return data.ToBytes()
 }
 
-func natsRequest(targetTypename string, targetID string, payload *easyjson.JSON, options *easyjson.JSON) (*easyjson.JSON, error) {
+func natsRequest(domain string, targetTypename string, targetID string, payload *easyjson.JSON, options *easyjson.JSON) (*sfMediators.OpMsg, error) {
 	resp, err := nc.Request(
-		fmt.Sprintf("service.%s.%s", targetTypename, targetID),
+		fmt.Sprintf("request.%s.%s.%s", domain, targetTypename, targetID),
 		buildNatsData("cli", "cli", payload, options),
 		time.Duration(NatsRequestTimeoutSec)*time.Second,
 	)
 	if err == nil {
 		if j, ok := easyjson.JSONFromBytes(resp.Data); ok {
-			return &j, nil
+			msg := sfMediators.OpMsgFromSfReply(&j, nil)
+			return &msg, nil
 		}
 		return nil, fmt.Errorf("response from function typename \"%s\" with id \"%s\" is not a json", targetTypename, targetID)
 	}

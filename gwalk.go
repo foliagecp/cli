@@ -6,8 +6,33 @@ import (
 	"strings"
 
 	"github.com/foliagecp/easyjson"
+	sfMediators "github.com/foliagecp/sdk/statefun/mediator"
 	"github.com/xlab/treeprint"
 )
+
+type linkId struct {
+	from string
+	name string
+}
+
+func (l linkId) asStr() string {
+	return l.from + ":" + l.name
+}
+
+type fullLinkInfo struct {
+	id   linkId
+	body *easyjson.JSON
+	to   string
+	tp   string
+	tags []string
+}
+
+type fullVertexInfo struct {
+	id       string
+	body     *easyjson.JSON
+	outLinks []linkId
+	inLinks  []linkId
+}
 
 const (
 	gWalkFileName = "gwalk"
@@ -60,198 +85,257 @@ func gWalkTo(id string) error {
 	return nil
 }
 
+func getLinkFullInfo(lid linkId) (fli fullLinkInfo, resErr error) {
+	fli.id = lid
+	fli.tags = []string{}
+
+	payload := easyjson.NewJSONObjectWithKeyValue("details", easyjson.NewJSON(true))
+	payload.SetByPath("name", easyjson.NewJSON(fli.id.name))
+	msg, err := natsRequest(NatsHubDomain, "functions.graph.api.link.read", fli.id.from, &payload, nil)
+	if err != nil {
+		resErr = err
+		return
+	}
+	if msg.Status != sfMediators.SYNC_OP_STATUS_OK {
+		resErr = fmt.Errorf(msg.Details)
+		return
+	}
+
+	to := msg.Data.GetByPath("to").AsStringDefault("")
+	if len(to) == 0 {
+		resErr = fmt.Errorf("link's to vertex id is empty invalid")
+		return
+	}
+
+	fli.to = to
+	fli.body = msg.Data.GetByPath("body").GetPtr()
+	fli.tp = msg.Data.GetByPath("type").AsStringDefault("")
+	if arr, ok := msg.Data.GetByPath("tags").AsArrayString(); ok {
+		fli.tags = arr
+	}
+
+	return
+}
+
+func getVertexFullInfo(vertexId string) (fvi fullVertexInfo, resErr error) {
+	fvi.id = vertexId
+	fvi.outLinks = []linkId{}
+	fvi.inLinks = []linkId{}
+
+	payload := easyjson.NewJSONObjectWithKeyValue("details", easyjson.NewJSON(true))
+	msg, err := natsRequest(NatsHubDomain, "functions.graph.api.vertex.read", vertexId, &payload, nil)
+	if err != nil {
+		resErr = err
+		return
+	}
+	if msg.Status != sfMediators.SYNC_OP_STATUS_OK {
+		resErr = fmt.Errorf(msg.Details)
+		return
+	}
+
+	fvi.body = msg.Data.GetByPath("body").GetPtr()
+
+	if arr, ok := msg.Data.GetByPath("links.out.names").AsArrayString(); ok {
+		for _, oln := range arr {
+			fvi.outLinks = append(fvi.outLinks, linkId{vertexId, oln})
+		}
+	}
+
+	inLinks := msg.Data.GetByPath("links.in").GetPtr()
+	for i := 0; i < inLinks.ArraySize(); i++ {
+		inLink := inLinks.ArrayElement(i)
+		from := inLink.GetByPath("from").AsStringDefault("")
+		linkName := inLink.GetByPath("name").AsStringDefault("")
+		fvi.inLinks = append(fvi.inLinks, linkId{from, linkName})
+	}
+
+	return
+}
+
 func gWalkInspect(prettyPrint bool) error {
 	const prefixIndent = "  "
 	gWalkLoad()
-	j, err := natsRequest("functions.cli.graph.vertex.info", gWalkData.GetByPath("id").AsStringDefault("root"), nil, nil)
+
+	fvi, err := getVertexFullInfo(gWalkData.GetByPath("id").AsStringDefault("root"))
 	if err != nil {
 		return err
 	}
 
-	id := j.GetByPath("id").AsStringDefault("???")
 	fmt.Println("Vertex")
-	fmt.Println(prefixIndent, id)
+	fmt.Println(prefixIndent, fvi.id)
 	fmt.Println()
 
-	body := j.GetByPath("body")
 	fmt.Println("Body")
-	if body.IsNonEmptyObject() {
+	if fvi.body.IsNonEmptyObject() {
 		if prettyPrint {
-			fmt.Println(prefixIndent + JSONStrPrettyStringAnyway(&body, len(prefixIndent), 2))
+			fmt.Println(prefixIndent + JSONStrPrettyStringAnyway(fvi.body, len(prefixIndent), 2))
 		} else {
-			fmt.Println(prefixIndent, body.ToString())
+			fmt.Println(prefixIndent, fvi.body.ToString())
 		}
 	} else {
 		fmt.Println(prefixIndent, "-")
 	}
 	fmt.Println()
 
-	outputLinks := j.GetByPath("links.output")
-	if outputLinks.IsArray() && outputLinks.ArraySize() > 0 {
-		fmt.Println("Output Links")
-
-		for i := 0; i < outputLinks.ArraySize(); i++ {
-			outputLink := outputLinks.ArrayElement(i)
-			if outputLink.IsNonEmptyObject() {
-				id := outputLink.GetByPath("id").AsStringDefault("???")
-				fmt.Println(prefixIndent+"To: ", id)
-
-				t := outputLink.GetByPath("type").AsStringDefault("???")
-				fmt.Println(prefixIndent+"Type: ", t)
-
-				if tags, ok := outputLink.GetByPath("tags").AsArrayString(); ok {
-					fmt.Println(prefixIndent+"Tags: ", strings.Join(tags, " "))
-				} else {
-					fmt.Println(prefixIndent + "Tags: -")
-				}
-
-				linkBody := outputLink.GetByPath("body")
-				if body.IsNonEmptyObject() {
-					if prettyPrint {
-						fmt.Printf("%sBody: %s\n", prefixIndent, JSONStrPrettyStringAnyway(&linkBody, len(prefixIndent)*2, 2))
-					} else {
-						fmt.Println(prefixIndent, "Body: ", linkBody.ToString())
-					}
-				} else {
-					fmt.Println(prefixIndent, "Body: -")
-				}
-				fmt.Println()
-			}
+	printLink := func(fli fullLinkInfo, input bool) {
+		if input {
+			fmt.Println(prefixIndent+"From: ", fli.id.from)
 		}
+		fmt.Println(prefixIndent+"Name: ", fli.id.name)
+		if !input {
+			fmt.Println(prefixIndent+"To: ", fli.to)
+		}
+		fmt.Println(prefixIndent+"Type: ", fli.tp)
+		fmt.Println(prefixIndent+"Tags: ", strings.Join(fli.tags, " "))
+		linkBody := fli.body
+		if linkBody.IsNonEmptyObject() {
+			if prettyPrint {
+				fmt.Printf("%sBody: %s\n", prefixIndent, JSONStrPrettyStringAnyway(linkBody, len(prefixIndent)*2, 2))
+			} else {
+				fmt.Println(prefixIndent+"Body: ", linkBody.ToString())
+			}
+		} else {
+			fmt.Println(prefixIndent + "Body:")
+		}
+		fmt.Println()
 	}
 
-	inputLinks := j.GetByPath("links.input")
-	if inputLinks.IsArray() && inputLinks.ArraySize() > 0 {
+	if len(fvi.outLinks) > 0 {
+		fmt.Println("Output Links")
+	}
+	for _, lid := range fvi.outLinks {
+		fli, err := getLinkFullInfo(lid)
+		if err == nil {
+			printLink(fli, false)
+		}
+	}
+	if len(fvi.inLinks) > 0 {
 		fmt.Println("Input Links")
-
-		for i := 0; i < inputLinks.ArraySize(); i++ {
-			inputLink := inputLinks.ArrayElement(i)
-			if inputLink.IsNonEmptyObject() {
-				id := inputLink.GetByPath("id").AsStringDefault("???")
-				fmt.Println(prefixIndent+"From: ", id)
-
-				t := inputLink.GetByPath("type").AsStringDefault("???")
-				fmt.Println(prefixIndent+"Type: ", t)
-
-				if tags, ok := inputLink.GetByPath("tags").AsArrayString(); ok {
-					fmt.Println(prefixIndent+"Tags: ", strings.Join(tags, " "))
-				} else {
-					fmt.Println(prefixIndent + "Tags: -")
-				}
-
-				linkBody := inputLink.GetByPath("body")
-				if body.IsNonEmptyObject() {
-					if prettyPrint {
-						fmt.Printf("%sBody: %s\n", prefixIndent, JSONStrPrettyStringAnyway(&linkBody, len(prefixIndent)*2, 2))
-					} else {
-						fmt.Println(prefixIndent, "Body: ", linkBody.ToString())
-					}
-				} else {
-					fmt.Println(prefixIndent, "Body: -")
-				}
-				fmt.Println()
-			}
+	}
+	for _, lid := range fvi.inLinks {
+		fli, err := getLinkFullInfo(lid)
+		if err == nil {
+			printLink(fli, true)
 		}
 	}
 
 	return nil
 }
 
-func gWalkRoutes(fd, bd int, verbose int) error {
+func gWalkRoutes(fd, bd uint, verbose int) error {
 	gWalkLoad()
-	payload := easyjson.NewJSONObject()
-	payload.SetByPath("fd", easyjson.NewJSON(fd))
-	payload.SetByPath("bd", easyjson.NewJSON(bd))
 	id := gWalkData.GetByPath("id").AsStringDefault("root")
-	routesJson, err := natsRequest("functions.cli.graph.vertex.routes", id, &payload, nil)
-	if err != nil {
-		return err
-	}
 
 	// Print routes as a tree -----------------------------------------------------------
+	type vxe struct {
+		id    string
+		depth uint
+	}
+
 	tree := treeprint.New()
 	tree.SetValue(id)
 
-	processTree := func(tree treeprint.Tree, transitionStr string) {
-		stack := []*easyjson.JSON{routesJson}
-		treeStack := []treeprint.Tree{tree}
-		for len(stack) > 0 {
-			rj := stack[0]
-			stack = stack[1:]
+	visitedVerticesCache := map[string]fullVertexInfo{}
+	visitedLinksCache := map[string]fullLinkInfo{}
 
-			tree := treeStack[0]
-			treeStack = treeStack[1:]
-
-			outsJson := rj.GetByPath(transitionStr)
-			if outsJson.IsArray() {
-				if verbose >= 1 {
-					for i := 0; i < outsJson.ArraySize(); i++ {
-						outJson := outsJson.ArrayElement(i)
-						outToId := outJson.GetByPath("id").AsStringDefault("unknown")
-						linkType := outJson.GetByPath("type").AsStringDefault("unknown")
-
-						linkMeta := ""
-						if verbose >= 2 {
-							if tags, ok := outJson.GetByPath("tags").AsArrayString(); ok && outJson.GetByPath("tags").ArraySize() > 0 {
-								linkMeta = fmt.Sprintf("%s | #%v", linkType, strings.Join(tags, " #"))
-							} else {
-								linkMeta = fmt.Sprintf("%s", linkType)
-							}
-						} else {
-							linkMeta = fmt.Sprintf("%s", linkType)
-						}
-						newTree := tree.AddMetaBranch(linkMeta, outToId)
-
-						stack = append(stack, &outJson)
-						treeStack = append(treeStack, newTree)
-					}
+	processTree := func(t treeprint.Tree, depth uint, backward bool) {
+		processTreeLink := func(lid linkId, currentTree treeprint.Tree) (string, treeprint.Tree) {
+			fli, ok := visitedLinksCache[lid.asStr()]
+			if !ok {
+				if i, err := getLinkFullInfo(lid); err == nil {
+					fli = i
+					visitedLinksCache[lid.asStr()] = fli
 				} else {
-					uniqueIds := map[string]bool{}
-					for i := 0; i < outsJson.ArraySize(); i++ {
-						outJson := outsJson.ArrayElement(i)
-						outToId := outJson.GetByPath("id").AsStringDefault("unknown")
+					return "", nil
+				}
+			}
 
-						if _, ok := uniqueIds[outToId]; !ok {
-							newTree := tree.AddBranch(outToId)
+			targetId := fli.to
+			if backward {
+				targetId = fli.id.from
+			}
 
-							stack = append(stack, &outJson)
-							treeStack = append(treeStack, newTree)
-
-							uniqueIds[outToId] = true
-						}
+			linkMeta := ""
+			if verbose >= 1 {
+				if verbose >= 2 {
+					if len(fli.tags) > 0 {
+						linkMeta = fmt.Sprintf("%s: %s | #%v", fli.id.name, fli.tp, strings.Join(fli.tags, " #"))
+						return targetId, currentTree.AddMetaBranch(linkMeta, targetId)
 					}
 				}
+				linkMeta = fmt.Sprintf("%s: %s", fli.id.name, fli.tp)
+				return targetId, currentTree.AddMetaBranch(linkMeta, targetId)
+			}
+			linkMeta = fmt.Sprintf("%s", fli.id.name)
+			return targetId, currentTree.AddMetaBranch(linkMeta, targetId)
+		}
+
+		stack := []vxe{{id, 0}}
+		treeStack := []treeprint.Tree{t}
+		for len(stack) > 0 {
+			v := stack[0]
+			stack = stack[1:]
+
+			currentTree := treeStack[0]
+			treeStack = treeStack[1:]
+
+			if v.depth >= depth {
+				continue
+			}
+
+			fvi, ok := visitedVerticesCache[v.id]
+			if !ok {
+				if i, err := getVertexFullInfo(v.id); err == nil {
+					fvi = i
+					visitedVerticesCache[v.id] = fvi
+				} else {
+					fmt.Printf("Cannot get vertex info: id=%s\n", fvi.id)
+					continue
+				}
+			}
+
+			links2Process := fvi.outLinks
+			if backward {
+				links2Process = fvi.inLinks
+			}
+			for _, lid := range links2Process {
+				nextVertexId, nextTree := processTreeLink(lid, currentTree)
+				if nextTree == nil {
+					fmt.Printf("Cannot get link info: from=%s, name=%s\n", lid.from, lid.name)
+					continue
+				}
+				stack = append(stack, vxe{nextVertexId, v.depth + 1})
+				treeStack = append(treeStack, nextTree)
 			}
 		}
 	}
-
 	if fd > 0 {
 		outs := tree.AddMetaBranch(fmt.Sprintf("depth=%d", fd), "OUT")
-		processTree(outs, "outs")
+		processTree(outs, fd, false)
 	}
-
 	if bd > 0 {
 		ins := tree.AddMetaBranch(fmt.Sprintf("depth=%d", bd), "IN")
-		processTree(ins, "ins")
+		processTree(ins, bd, true)
 	}
-
 	fmt.Println(tree.String())
 	// ----------------------------------------------------------------------------------
 
-	//fmt.Println(JSONStrPrettyStringAnyway(routesJson, 2))
 	return nil
 }
 
-func gWalkQuery(algorithm string, query string) error {
+func gWalkQuery(query string) error {
 	const prefixIndent = "  "
 
 	gWalkLoad()
-	payload := easyjson.NewJSONObjectWithKeyValue("jpgql_query", easyjson.NewJSON(query))
-	j, err := natsRequest(fmt.Sprintf("functions.graph.api.query.jpgql.%s", algorithm), gWalkData.GetByPath("id").AsStringDefault("root"), &payload, nil)
+	payload := easyjson.NewJSONObjectWithKeyValue("query", easyjson.NewJSON(query))
+	msg, err := natsRequest(NatsHubDomain, fmt.Sprintf("functions.graph.api.query.jpgql.ctra"), gWalkData.GetByPath("id").AsStringDefault("root"), &payload, nil)
 	if err != nil {
 		return err
 	}
-	fmt.Println("Result:", strings.Join(j.GetByPath("result").ObjectKeys(), ", "))
+	if msg.Status != sfMediators.SYNC_OP_STATUS_OK {
+		return fmt.Errorf(msg.Details)
+	}
+	fmt.Println("Result:", strings.Join(msg.Data.ObjectKeys(), ", "))
 
 	return nil
 }
