@@ -91,7 +91,7 @@ func getLinkFullInfo(lid linkId) (fli fullLinkInfo, resErr error) {
 
 	payload := easyjson.NewJSONObjectWithKeyValue("details", easyjson.NewJSON(true))
 	payload.SetByPath("name", easyjson.NewJSON(fli.id.name))
-	msg, err := natsRequest(NatsHubDomain, "functions.graph.api.link.read", fli.id.from, &payload, nil)
+	msg, err := natsRequest("functions.graph.api.link.read", fli.id.from, &payload, nil)
 	if err != nil {
 		resErr = err
 		return
@@ -123,7 +123,7 @@ func getVertexFullInfo(vertexId string) (fvi fullVertexInfo, resErr error) {
 	fvi.inLinks = []linkId{}
 
 	payload := easyjson.NewJSONObjectWithKeyValue("details", easyjson.NewJSON(true))
-	msg, err := natsRequest(NatsHubDomain, "functions.graph.api.vertex.read", vertexId, &payload, nil)
+	msg, err := natsRequest("functions.graph.api.vertex.read", vertexId, &payload, nil)
 	if err != nil {
 		resErr = err
 		return
@@ -328,7 +328,7 @@ func gWalkQuery(query string) error {
 
 	gWalkLoad()
 	payload := easyjson.NewJSONObjectWithKeyValue("query", easyjson.NewJSON(query))
-	msg, err := natsRequest(NatsHubDomain, fmt.Sprintf("functions.graph.api.query.jpgql.ctra"), gWalkData.GetByPath("id").AsStringDefault("root"), &payload, nil)
+	msg, err := natsRequest(fmt.Sprintf("functions.graph.api.query.jpgql.ctra"), gWalkData.GetByPath("id").AsStringDefault("root"), &payload, nil)
 	if err != nil {
 		return err
 	}

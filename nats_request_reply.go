@@ -2,9 +2,11 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/foliagecp/easyjson"
+	"github.com/foliagecp/sdk/statefun"
 	sfMediators "github.com/foliagecp/sdk/statefun/mediator"
 )
 
@@ -21,9 +23,15 @@ func buildNatsData(callerTypename string, callerID string, payload *easyjson.JSO
 	return data.ToBytes()
 }
 
-func natsRequest(domain string, targetTypename string, targetID string, payload *easyjson.JSON, options *easyjson.JSON) (*sfMediators.OpMsg, error) {
+func natsRequest(targetTypename string, targetID string, payload *easyjson.JSON, options *easyjson.JSON) (*sfMediators.OpMsg, error) {
+	targetDomain := NatsHubDomain
+	tokens := strings.Split(targetID, statefun.ObjectIDDomainSeparator)
+	if len(tokens) == 2 {
+		targetDomain = tokens[0]
+	}
+
 	resp, err := nc.Request(
-		fmt.Sprintf("request.%s.%s.%s", domain, targetTypename, targetID),
+		fmt.Sprintf("request.%s.%s.%s", targetDomain, targetTypename, targetID),
 		buildNatsData("cli", "cli", payload, options),
 		time.Duration(NatsRequestTimeoutSec)*time.Second,
 	)
