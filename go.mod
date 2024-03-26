@@ -4,7 +4,7 @@ go 1.19
 
 require (
 	github.com/TylerBrock/colorjson v0.0.0-20200706003622-8a50f05110d2
-	github.com/foliagecp/sdk v0.1.3-0.20240227061915-01efbe3614e0
+	github.com/foliagecp/sdk v0.1.3-0.20240326150434-632b52922e0d
 	github.com/nats-io/nats.go v1.31.0
 	github.com/urfave/cli/v2 v2.25.7
 )

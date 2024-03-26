@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/foliagecp/easyjson"
-	sfMediators "github.com/foliagecp/sdk/statefun/mediator"
 	"github.com/xlab/treeprint"
 )
 
@@ -89,28 +88,22 @@ func getLinkFullInfo(lid linkId) (fli fullLinkInfo, resErr error) {
 	fli.id = lid
 	fli.tags = []string{}
 
-	payload := easyjson.NewJSONObjectWithKeyValue("details", easyjson.NewJSON(true))
-	payload.SetByPath("name", easyjson.NewJSON(fli.id.name))
-	msg, err := natsRequest("functions.graph.api.link.read", fli.id.from, &payload, nil)
+	data, err := dbClient.Graph.VerticesLinkRead(fli.id.from, fli.id.name, true)
 	if err != nil {
 		resErr = err
 		return
 	}
-	if msg.Status != sfMediators.SYNC_OP_STATUS_OK {
-		resErr = fmt.Errorf(msg.Details)
-		return
-	}
 
-	to := msg.Data.GetByPath("to").AsStringDefault("")
+	to := data.GetByPath("to").AsStringDefault("")
 	if len(to) == 0 {
 		resErr = fmt.Errorf("link's to vertex id is empty invalid")
 		return
 	}
 
 	fli.to = to
-	fli.body = msg.Data.GetByPath("body").GetPtr()
-	fli.tp = msg.Data.GetByPath("type").AsStringDefault("")
-	if arr, ok := msg.Data.GetByPath("tags").AsArrayString(); ok {
+	fli.body = data.GetByPath("body").GetPtr()
+	fli.tp = data.GetByPath("type").AsStringDefault("")
+	if arr, ok := data.GetByPath("tags").AsArrayString(); ok {
 		fli.tags = arr
 	}
 
@@ -122,26 +115,21 @@ func getVertexFullInfo(vertexId string) (fvi fullVertexInfo, resErr error) {
 	fvi.outLinks = []linkId{}
 	fvi.inLinks = []linkId{}
 
-	payload := easyjson.NewJSONObjectWithKeyValue("details", easyjson.NewJSON(true))
-	msg, err := natsRequest("functions.graph.api.vertex.read", vertexId, &payload, nil)
+	data, err := dbClient.Graph.VertexRead(vertexId, true)
 	if err != nil {
 		resErr = err
 		return
 	}
-	if msg.Status != sfMediators.SYNC_OP_STATUS_OK {
-		resErr = fmt.Errorf(msg.Details)
-		return
-	}
 
-	fvi.body = msg.Data.GetByPath("body").GetPtr()
+	fvi.body = data.GetByPath("body").GetPtr()
 
-	if arr, ok := msg.Data.GetByPath("links.out.names").AsArrayString(); ok {
+	if arr, ok := data.GetByPath("links.out.names").AsArrayString(); ok {
 		for _, oln := range arr {
 			fvi.outLinks = append(fvi.outLinks, linkId{vertexId, oln})
 		}
 	}
 
-	inLinks := msg.Data.GetByPath("links.in").GetPtr()
+	inLinks := data.GetByPath("links.in").GetPtr()
 	for i := 0; i < inLinks.ArraySize(); i++ {
 		inLink := inLinks.ArrayElement(i)
 		from := inLink.GetByPath("from").AsStringDefault("")
@@ -327,15 +315,13 @@ func gWalkQuery(query string) error {
 	const prefixIndent = "  "
 
 	gWalkLoad()
-	payload := easyjson.NewJSONObjectWithKeyValue("query", easyjson.NewJSON(query))
-	msg, err := natsRequest(fmt.Sprintf("functions.graph.api.query.jpgql.ctra"), gWalkData.GetByPath("id").AsStringDefault("root"), &payload, nil)
+
+	result, err := dbClient.Query.JPGQLCtraQuery(gWalkData.GetByPath("id").AsStringDefault("root"), query)
 	if err != nil {
 		return err
 	}
-	if msg.Status != sfMediators.SYNC_OP_STATUS_OK {
-		return fmt.Errorf(msg.Details)
-	}
-	fmt.Println("Result:", strings.Join(msg.Data.ObjectKeys(), ", "))
+
+	fmt.Println("Result:", strings.Join(result, ", "))
 
 	return nil
 }

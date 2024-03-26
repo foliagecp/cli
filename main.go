@@ -5,8 +5,8 @@ import (
 	"log"
 	"os"
 
+	"github.com/foliagecp/sdk/clients/go/db"
 	"github.com/foliagecp/sdk/statefun/system"
-	"github.com/nats-io/nats.go"
 	"github.com/urfave/cli/v2"
 )
 
@@ -16,15 +16,15 @@ var (
 	NatsRequestTimeoutSec int    = system.GetEnvMustProceed("NATS_REQUEST_TIMEOUT_SEC", 60)
 	FoliageCLIDir         string = system.GetEnvMustProceed("FOLIAGE_CLI_DIR", "~/.foliage-cli")
 
-	nc *nats.Conn
+	dbClient db.DBSyncClient
 )
 
 func main() {
-	var err error
-	nc, err = nats.Connect(NatsURL)
+	dbc, err := db.NewDBSyncClient(NatsURL, NatsRequestTimeoutSec, NatsHubDomain)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalln(err)
 	}
+	dbClient = dbc
 
 	if s, err := expandFileName(FoliageCLIDir); err != nil {
 		log.Panicln(err)
