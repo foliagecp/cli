@@ -15,6 +15,8 @@ github.com/foliagecp/easyjson v0.1.0 h1:9+xUXCWMlwlgsbH3GQikfMRpRzFdDi1utFOd7l45
 github.com/foliagecp/easyjson v0.1.0/go.mod h1:GTJFL3X3UXLq65yYiZZ6aOv6EMUtxGHhblPPvW7a5/s=
 github.com/foliagecp/sdk v0.1.3-0.20240326163811-49d39b6f62fb h1:nJNHR/qMDwtTGl2X6HbuU1DzASuIk3AinK6bP4pEUKg=
 github.com/foliagecp/sdk v0.1.3-0.20240326163811-49d39b6f62fb/go.mod h1:DRRRG2neex/RltlSqU2ROIX6+ijPb8LBAY8rLQ9krq4=
+github.com/foliagecp/sdk v0.1.3-0.20240326165942-6e077c3795ed h1:SsVvdJ1O+pT7GgQNrxZoBf1xsw9wHqYwJwk1jHhBUqA=
+github.com/foliagecp/sdk v0.1.3-0.20240326165942-6e077c3795ed/go.mod h1:DRRRG2neex/RltlSqU2ROIX6+ijPb8LBAY8rLQ9krq4=
 github.com/golang/protobuf v1.2.0/go.mod h1:6lQm79b+lXiMfvg/cZm0SGofjICqVBUtrP5yJMmIC1U=
 github.com/golang/protobuf v1.5.0/go.mod h1:FsONVRAS9T7sI+LIUmWTfcYkHO4aIWwzhcaSAoJOfIk=
 github.com/golang/protobuf v1.5.3 h1:KhyjKVUg7Usr/dYsdSqoFveMYd5ko72D+zANwlG1mmg=
