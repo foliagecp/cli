@@ -4,7 +4,7 @@ go 1.19
 
 require (
 	github.com/TylerBrock/colorjson v0.0.0-20200706003622-8a50f05110d2
-	github.com/foliagecp/sdk v0.1.3-0.20240326165942-6e077c3795ed
+	github.com/foliagecp/sdk v0.1.3-0.20240326182429-acd205175df9
 	github.com/urfave/cli/v2 v2.25.7
 	github.com/xlab/treeprint v1.2.0
 )
