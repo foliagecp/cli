@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/foliagecp/easyjson"
+	"github.com/foliagecp/sdk/statefun/system"
 	"github.com/xlab/treeprint"
 )
 
@@ -142,7 +143,7 @@ func getVertexFullInfo(vertexId string) (fvi fullVertexInfo, resErr error) {
 
 func gWalkInspect(prettyPrint bool) error {
 	const prefixIndent = "  "
-	gWalkLoad()
+	system.MsgOnErrorReturn(gWalkLoad())
 
 	fvi, err := getVertexFullInfo(gWalkData.GetByPath("id").AsStringDefault("root"))
 	if err != nil {
@@ -211,7 +212,7 @@ func gWalkInspect(prettyPrint bool) error {
 }
 
 func gWalkRoutes(fd, bd uint, verbose int) error {
-	gWalkLoad()
+	system.MsgOnErrorReturn(gWalkLoad())
 	id := gWalkData.GetByPath("id").AsStringDefault("root")
 
 	// Print routes as a tree -----------------------------------------------------------
@@ -254,7 +255,7 @@ func gWalkRoutes(fd, bd uint, verbose int) error {
 				linkMeta = fmt.Sprintf("%s: %s", fli.id.name, fli.tp)
 				return targetId, currentTree.AddMetaBranch(linkMeta, targetId)
 			}
-			linkMeta = fmt.Sprintf("%s", fli.id.name)
+			linkMeta = fli.id.name
 			return targetId, currentTree.AddMetaBranch(linkMeta, targetId)
 		}
 
@@ -312,9 +313,7 @@ func gWalkRoutes(fd, bd uint, verbose int) error {
 }
 
 func gWalkQuery(query string) error {
-	const prefixIndent = "  "
-
-	gWalkLoad()
+	system.MsgOnErrorReturn(gWalkLoad())
 
 	result, err := dbClient.Query.JPGQLCtraQuery(gWalkData.GetByPath("id").AsStringDefault("root"), query)
 	if err != nil {
