@@ -107,6 +107,27 @@ func main() {
 							return gWalkQuery(cCtx.Args().First())
 						},
 					},
+					{
+						Name:  "dot",
+						Usage: "Receive graph in DOT format",
+						Flags: []cli.Flag{
+							&cli.IntFlag{
+								Name:    "depth",
+								Aliases: []string{"d"},
+								Value:   -1,
+								Usage:   "Graph depth",
+							},
+							&cli.BoolFlag{
+								Name:    "raw",
+								Aliases: []string{"r"},
+								Value:   false,
+								Usage:   "Raw DOT data only",
+							},
+						},
+						Action: func(cCtx *cli.Context) error {
+							return gWalkPrintDot(cCtx.Int("d"), cCtx.Bool("r"))
+						},
+					},
 				},
 			},
 		},

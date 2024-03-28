@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/foliagecp/easyjson"
+	sfMediators "github.com/foliagecp/sdk/statefun/mediator"
+	sfp "github.com/foliagecp/sdk/statefun/plugins"
 	"github.com/foliagecp/sdk/statefun/system"
 	"github.com/xlab/treeprint"
 )
@@ -308,6 +310,41 @@ func gWalkRoutes(fd, bd uint, verbose int) error {
 	}
 	fmt.Println(tree.String())
 	// ----------------------------------------------------------------------------------
+
+	return nil
+}
+
+func gWalkGetDot(root string, depth int) (string, error) {
+	system.MsgOnErrorReturn(gWalkLoad())
+
+	payload := easyjson.NewJSONObjectWithKeyValue("depth", easyjson.NewJSON(depth))
+	om := sfMediators.OpMsgFromSfReply(
+		dbClient.Request(sfp.AutoRequestSelect, "functions.graph.api.object.debug.print.graph", root, &payload, nil),
+	)
+	if om.Status != sfMediators.SYNC_OP_STATUS_OK {
+		return "", fmt.Errorf(om.Details)
+	}
+	return om.Data.GetByPath("dot_file").AsStringDefault(""), nil
+}
+
+func gWalkPrintDot(depth int, raw bool) error {
+	system.MsgOnErrorReturn(gWalkLoad())
+	root := gWalkData.GetByPath("id").AsStringDefault("root")
+
+	dotFileStr, err := gWalkGetDot(root, depth)
+	if err != nil {
+		return err
+	}
+
+	if !raw {
+		fmt.Println("Graph DOT")
+		fmt.Println("  From vertex:", root)
+		fmt.Println("  Depth:", depth)
+
+		fmt.Println()
+		fmt.Println("DOT Content")
+	}
+	fmt.Println(dotFileStr)
 
 	return nil
 }
