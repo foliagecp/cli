@@ -91,9 +91,15 @@ func main() {
 								Value:   false,
 								Usage:   "JSON pretty print",
 							},
+							&cli.BoolFlag{
+								Name:    "all",
+								Aliases: []string{"a"},
+								Value:   false,
+								Usage:   "Print all available data",
+							},
 						},
 						Action: func(cCtx *cli.Context) error {
-							return gWalkInspect(cCtx.Bool("p"))
+							return gWalkInspect(cCtx.Bool("p"), cCtx.Bool("a"))
 						},
 					},
 					{

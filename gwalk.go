@@ -143,7 +143,7 @@ func getVertexFullInfo(vertexId string) (fvi fullVertexInfo, resErr error) {
 	return
 }
 
-func gWalkInspect(prettyPrint bool) error {
+func gWalkInspect(prettyPrint bool, allData bool) error {
 	const prefixIndent = "  "
 	system.MsgOnErrorReturn(gWalkLoad())
 
@@ -168,45 +168,47 @@ func gWalkInspect(prettyPrint bool) error {
 	}
 	fmt.Println()
 
-	printLink := func(fli fullLinkInfo, input bool) {
-		if input {
-			fmt.Println(prefixIndent+"From: ", fli.id.from)
-		}
-		fmt.Println(prefixIndent+"Name: ", fli.id.name)
-		if !input {
-			fmt.Println(prefixIndent+"To: ", fli.to)
-		}
-		fmt.Println(prefixIndent+"Type: ", fli.tp)
-		fmt.Println(prefixIndent+"Tags: ", strings.Join(fli.tags, " "))
-		linkBody := fli.body
-		if linkBody.IsNonEmptyObject() {
-			if prettyPrint {
-				fmt.Printf("%sBody: %s\n", prefixIndent, JSONStrPrettyStringAnyway(linkBody, len(prefixIndent)*2, 2))
-			} else {
-				fmt.Println(prefixIndent+"Body: ", linkBody.ToString())
+	if allData {
+		printLink := func(fli fullLinkInfo, input bool) {
+			if input {
+				fmt.Println(prefixIndent+"From: ", fli.id.from)
 			}
-		} else {
-			fmt.Println(prefixIndent + "Body:")
+			fmt.Println(prefixIndent+"Name: ", fli.id.name)
+			if !input {
+				fmt.Println(prefixIndent+"To: ", fli.to)
+			}
+			fmt.Println(prefixIndent+"Type: ", fli.tp)
+			fmt.Println(prefixIndent+"Tags: ", strings.Join(fli.tags, " "))
+			linkBody := fli.body
+			if linkBody.IsNonEmptyObject() {
+				if prettyPrint {
+					fmt.Printf("%sBody: %s\n", prefixIndent, JSONStrPrettyStringAnyway(linkBody, len(prefixIndent)*2, 2))
+				} else {
+					fmt.Println(prefixIndent+"Body: ", linkBody.ToString())
+				}
+			} else {
+				fmt.Println(prefixIndent + "Body:")
+			}
+			fmt.Println()
 		}
-		fmt.Println()
-	}
 
-	if len(fvi.outLinks) > 0 {
-		fmt.Println("Output Links")
-	}
-	for _, lid := range fvi.outLinks {
-		fli, err := getLinkFullInfo(lid)
-		if err == nil {
-			printLink(fli, false)
+		if len(fvi.outLinks) > 0 {
+			fmt.Println("Output Links")
 		}
-	}
-	if len(fvi.inLinks) > 0 {
-		fmt.Println("Input Links")
-	}
-	for _, lid := range fvi.inLinks {
-		fli, err := getLinkFullInfo(lid)
-		if err == nil {
-			printLink(fli, true)
+		for _, lid := range fvi.outLinks {
+			fli, err := getLinkFullInfo(lid)
+			if err == nil {
+				printLink(fli, false)
+			}
+		}
+		if len(fvi.inLinks) > 0 {
+			fmt.Println("Input Links")
+		}
+		for _, lid := range fvi.inLinks {
+			fli, err := getLinkFullInfo(lid)
+			if err == nil {
+				printLink(fli, true)
+			}
 		}
 	}
 
