@@ -1,11 +1,12 @@
-module github.com/foliagecp/sdia
+module github.com/foliagecp/cli
 
 go 1.19
 
 require (
 	github.com/TylerBrock/colorjson v0.0.0-20200706003622-8a50f05110d2
-	github.com/foliagecp/sdk v0.1.3-0.20240328094206-0013ea058f6d
-	github.com/urfave/cli/v2 v2.25.7
+	github.com/foliagecp/easyjson v0.1.0
+	github.com/foliagecp/sdk v0.1.3-0.20240414074230-11b528814ec7
+	github.com/urfave/cli/v2 v2.27.1
 	github.com/xlab/treeprint v1.2.0
 )
 
@@ -16,12 +17,12 @@ require (
 	github.com/fatih/color v1.16.0 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/hokaccha/go-prettyjson v0.0.0-20211117102719-0474bc63780f // indirect
-	github.com/klauspost/compress v1.17.0 // indirect
+	github.com/klauspost/compress v1.17.7 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect
-	github.com/nats-io/nats.go v1.31.0 // indirect
-	github.com/nats-io/nkeys v0.4.5 // indirect
+	github.com/nats-io/nats.go v1.33.1 // indirect
+	github.com/nats-io/nkeys v0.4.7 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/prometheus/client_golang v1.17.0 // indirect
 	github.com/prometheus/client_model v0.4.1-0.20230718164431-9a2bf3000d16 // indirect
@@ -30,11 +31,7 @@ require (
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/xrash/smetrics v0.0.0-20201216005158-039620a65673 // indirect
-	golang.org/x/crypto v0.12.0 // indirect
+	golang.org/x/crypto v0.21.0 // indirect
+	golang.org/x/sys v0.18.0 // indirect
 	google.golang.org/protobuf v1.31.0 // indirect
-)
-
-require (
-	github.com/foliagecp/easyjson v0.1.0
-	golang.org/x/sys v0.14.0 // indirect
 )
