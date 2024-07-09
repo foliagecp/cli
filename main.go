@@ -114,9 +114,15 @@ func main() {
 						},
 					},
 					{
-						Name:  "dot",
-						Usage: "Receive graph in DOT format",
+						Name:  "export",
+						Usage: "Receive graph in different formats",
 						Flags: []cli.Flag{
+							&cli.StringFlag{
+								Name:    "format",
+								Aliases: []string{"f"},
+								Value:   "dot",
+								Usage:   "Use one from the following: dot, graphml. Default: dot",
+							},
 							&cli.IntFlag{
 								Name:    "depth",
 								Aliases: []string{"d"},
@@ -131,7 +137,7 @@ func main() {
 							},
 						},
 						Action: func(cCtx *cli.Context) error {
-							return gWalkPrintDot(cCtx.Int("d"), cCtx.Bool("r"))
+							return gWalkPrintGraph(cCtx.String("f"), cCtx.Int("d"), cCtx.Bool("r"))
 						},
 					},
 				},

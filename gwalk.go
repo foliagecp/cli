@@ -316,35 +316,36 @@ func gWalkRoutes(fd, bd uint, verbose int) error {
 	return nil
 }
 
-func gWalkGetDot(root string, depth int) (string, error) {
+func gWalkGetGraph(format string, root string, depth int) (string, error) {
 	system.MsgOnErrorReturn(gWalkLoad())
 
 	payload := easyjson.NewJSONObjectWithKeyValue("depth", easyjson.NewJSON(depth))
+	payload.SetByPath("format", easyjson.NewJSON(format))
 	om := sfMediators.OpMsgFromSfReply(
 		dbClient.Request(sfp.AutoRequestSelect, "functions.graph.api.object.debug.print.graph", root, &payload, nil),
 	)
 	if om.Status != sfMediators.SYNC_OP_STATUS_OK {
 		return "", fmt.Errorf(om.Details)
 	}
-	return om.Data.GetByPath("dot_file").AsStringDefault(""), nil
+	return om.Data.GetByPath("file").AsStringDefault(""), nil
 }
 
-func gWalkPrintDot(depth int, raw bool) error {
+func gWalkPrintGraph(format string, depth int, raw bool) error {
 	system.MsgOnErrorReturn(gWalkLoad())
 	root := gWalkData.GetByPath("id").AsStringDefault("root")
 
-	dotFileStr, err := gWalkGetDot(root, depth)
+	dotFileStr, err := gWalkGetGraph(format, root, depth)
 	if err != nil {
 		return err
 	}
 
 	if !raw {
-		fmt.Println("Graph DOT")
+		fmt.Printf("Graph in %s format\n", format)
 		fmt.Println("  From vertex:", root)
 		fmt.Println("  Depth:", depth)
 
 		fmt.Println()
-		fmt.Println("DOT Content")
+		fmt.Println("Content")
 	}
 	fmt.Println(dotFileStr)
 
