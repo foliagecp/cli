@@ -320,6 +320,10 @@ func gWalkGetGraph(format string, root string, depth int) (string, error) {
 	system.MsgOnErrorReturn(gWalkLoad())
 
 	payload := easyjson.NewJSONObjectWithKeyValue("depth", easyjson.NewJSON(depth))
+	if format == "graphml_json2xml" {
+		format = "graphml"
+		payload.SetByPath("json2xml", easyjson.NewJSON(true))
+	}
 	payload.SetByPath("format", easyjson.NewJSON(format))
 	om := sfMediators.OpMsgFromSfReply(
 		dbClient.Request(sfp.AutoRequestSelect, "functions.graph.api.object.debug.print.graph", root, &payload, nil),

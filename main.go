@@ -121,7 +121,7 @@ func main() {
 								Name:    "format",
 								Aliases: []string{"f"},
 								Value:   "dot",
-								Usage:   "Use one from the following: dot, graphml. Default: dot",
+								Usage:   "Use one from the following: dot, graphml, graphml_json2xml. Default: dot",
 							},
 							&cli.IntFlag{
 								Name:    "depth",
