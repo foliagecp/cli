@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/foliagecp/easyjson"
 	sfMediators "github.com/foliagecp/sdk/statefun/mediator"
@@ -334,6 +335,21 @@ func gWalkGetGraph(format string, root string, depth int) (string, error) {
 	return om.Data.GetByPath("file").AsStringDefault(""), nil
 }
 
+func gWalkSetGraph(format string, root string, data string) error {
+	system.MsgOnErrorReturn(gWalkLoad())
+
+	payload := easyjson.NewJSONObjectWithKeyValue("source", easyjson.NewJSON("payload"))
+	payload.SetByPath("format", easyjson.NewJSON(format))
+	payload.SetByPath("data", easyjson.NewJSON(data))
+	om := sfMediators.OpMsgFromSfReply(
+		dbClient.Request(sfp.AutoRequestSelect, "functions.graph.api.import", root, &payload, nil, 300*time.Second),
+	)
+	if om.Status != sfMediators.SYNC_OP_STATUS_OK {
+		return fmt.Errorf(om.Details)
+	}
+	return nil
+}
+
 func gWalkPrintGraph(format string, depth int, raw bool) error {
 	system.MsgOnErrorReturn(gWalkLoad())
 	root := gWalkData.GetByPath("id").AsStringDefault("root")
@@ -352,6 +368,18 @@ func gWalkPrintGraph(format string, depth int, raw bool) error {
 		fmt.Println("Content")
 	}
 	fmt.Println(dotFileStr)
+
+	return nil
+}
+
+func gWalkImportGraph(format string, graphData string) error {
+	system.MsgOnErrorReturn(gWalkLoad())
+	root := gWalkData.GetByPath("id").AsStringDefault("root")
+
+	err := gWalkSetGraph(format, root, graphData)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }

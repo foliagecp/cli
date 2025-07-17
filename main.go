@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 
@@ -120,7 +121,7 @@ func main() {
 							&cli.StringFlag{
 								Name:    "format",
 								Aliases: []string{"f"},
-								Value:   "dot",
+								Value:   "graphml",
 								Usage:   "Use one from the following: dot, graphml, graphml_json2xml. Default: dot",
 							},
 							&cli.IntFlag{
@@ -133,11 +134,51 @@ func main() {
 								Name:    "raw",
 								Aliases: []string{"r"},
 								Value:   false,
-								Usage:   "Raw DOT data only",
+								Usage:   "Raw data only",
 							},
 						},
 						Action: func(cCtx *cli.Context) error {
 							return gWalkPrintGraph(cCtx.String("f"), cCtx.Int("d"), cCtx.Bool("r"))
+						},
+					},
+					{
+						Name:      "import",
+						Usage:     "Upload graph from different formats",
+						ArgsUsage: "[filename]",
+						Flags: []cli.Flag{
+							&cli.StringFlag{
+								Name:    "format",
+								Aliases: []string{"f"},
+								Value:   "graphml",
+								Usage:   "Use one from the following: graphml. Default: graphml",
+							},
+							&cli.BoolFlag{
+								Name:    "stdin",
+								Aliases: []string{"s"},
+								Value:   false,
+								Usage:   "Raw data from stdin (\"filename\" argument will be ignored)",
+							},
+						},
+						Action: func(cCtx *cli.Context) error {
+							var input io.Reader
+							if cCtx.Bool("s") {
+								input = os.Stdin
+							} else {
+								if cCtx.NArg() != 1 {
+									return fmt.Errorf("wrong argument amount")
+								}
+								f, err := os.Open(cCtx.Args().First())
+								if err != nil {
+									return err
+								}
+								input = f
+								defer f.Close()
+							}
+							data, err := io.ReadAll(input)
+							if err != nil {
+								return err
+							}
+							return gWalkImportGraph(cCtx.String("f"), string(data))
 						},
 					},
 				},
