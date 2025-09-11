@@ -317,7 +317,7 @@ func gWalkRoutes(fd, bd uint, verbose int) error {
 	return nil
 }
 
-func gWalkGetGraph(format string, root string, depth int) (string, error) {
+func gWalkGetGraph(format string, root string, depth int, excludeVertex, excludeEdge []string) (string, error) {
 	system.MsgOnErrorReturn(gWalkLoad())
 
 	payload := easyjson.NewJSONObjectWithKeyValue("depth", easyjson.NewJSON(depth))
@@ -326,6 +326,22 @@ func gWalkGetGraph(format string, root string, depth int) (string, error) {
 		payload.SetByPath("json2xml", easyjson.NewJSON(true))
 	}
 	payload.SetByPath("format", easyjson.NewJSON(format))
+	// Build exclude arrays if provided
+	if len(excludeVertex) > 0 {
+		arr := easyjson.NewJSONArray().GetPtr()
+		for _, v := range excludeVertex {
+			arr.AddToArray(easyjson.NewJSON(v))
+		}
+		payload.SetByPath("exclude.vertex", *arr)
+	}
+	if len(excludeEdge) > 0 {
+		arr := easyjson.NewJSONArray().GetPtr()
+		for _, v := range excludeEdge {
+			arr.AddToArray(easyjson.NewJSON(v))
+		}
+		payload.SetByPath("exclude.edge", *arr)
+	}
+
 	om := sfMediators.OpMsgFromSfReply(
 		dbClient.Request(sfp.AutoRequestSelect, "functions.graph.api.object.debug.print.graph", root, &payload, nil),
 	)
@@ -350,11 +366,11 @@ func gWalkSetGraph(format string, root string, data string) error {
 	return nil
 }
 
-func gWalkPrintGraph(format string, depth int, raw bool) error {
+func gWalkPrintGraph(format string, depth int, raw bool, excludeVertex, excludeEdge []string) error {
 	system.MsgOnErrorReturn(gWalkLoad())
 	root := gWalkData.GetByPath("id").AsStringDefault("root")
 
-	dotFileStr, err := gWalkGetGraph(format, root, depth)
+	dotFileStr, err := gWalkGetGraph(format, root, depth, excludeVertex, excludeEdge)
 	if err != nil {
 		return err
 	}

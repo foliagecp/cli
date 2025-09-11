@@ -136,9 +136,25 @@ func main() {
 								Value:   false,
 								Usage:   "Raw data only",
 							},
+							&cli.StringSliceFlag{
+								Name:    "exclude-vertex",
+								Aliases: []string{"X"},
+								Usage:   "Exclude vertex body fields (repeatable). Example: -X __meta -X spec.secret",
+							},
+							&cli.StringSliceFlag{
+								Name:    "exclude-edge",
+								Aliases: []string{"x"},
+								Usage:   "Exclude edge body fields (repeatable). Example: -x __meta -x config.token",
+							},
 						},
 						Action: func(cCtx *cli.Context) error {
-							return gWalkPrintGraph(cCtx.String("f"), cCtx.Int("d"), cCtx.Bool("r"))
+							return gWalkPrintGraph(
+								cCtx.String("format"),
+								cCtx.Int("depth"),
+								cCtx.Bool("raw"),
+								cCtx.StringSlice("exclude-vertex"),
+								cCtx.StringSlice("exclude-edge"),
+							)
 						},
 					},
 					{
