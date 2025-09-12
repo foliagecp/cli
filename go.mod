@@ -4,7 +4,7 @@ go 1.21.1
 
 require (
 	github.com/TylerBrock/colorjson v0.0.0-20200706003622-8a50f05110d2
-	github.com/foliagecp/easyjson v0.1.3
+	github.com/foliagecp/easyjson v0.1.7
 	github.com/foliagecp/sdk v0.1.7-dev08072025.0.20250717135024-cd46d7e71165
 	github.com/urfave/cli/v2 v2.27.1
 	github.com/xlab/treeprint v1.2.0

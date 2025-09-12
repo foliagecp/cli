@@ -348,7 +348,10 @@ func gWalkGetGraph(format string, root string, depth int, excludeVertex, exclude
 	if om.Status != sfMediators.SYNC_OP_STATUS_OK {
 		return "", fmt.Errorf(om.Details)
 	}
-	return om.Data.GetByPath("file").AsStringDefault(""), nil
+	fileJSON := om.Data.GetByPath("file").GetPtr()
+	fileJSON.Normalize()
+
+	return fileJSON.AsStringDefault(""), nil
 }
 
 func gWalkSetGraph(format string, root string, data string) error {
