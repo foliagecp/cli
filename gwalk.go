@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"html"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -318,6 +320,47 @@ func gWalkRoutes(fd, bd uint, verbose int) error {
 }
 
 func gWalkGetGraph(format string, root string, depth int, excludeVertex, excludeEdge []string) (string, error) {
+	// Graphml json body patch ----------------------------------------------------------
+	// normalizeGraphMLJSONBodies finds all <data key="bdj"> ... </data> entries,
+	// parses their content as JSON, normalizes it (arrays order, numeric unification),
+	// and writes it back (XML-escaped). XML bodies (key="bdx") are untouched.
+	var reBDJ = regexp.MustCompile(`(?s)(<data\s+key=['"]bdj['"]>)(.*?)(</data>)`)
+
+	normalizeGraphMLJSONBodies := func(graphml string) string {
+		return reBDJ.ReplaceAllStringFunc(graphml, func(m string) string {
+			sub := reBDJ.FindStringSubmatch(m)
+			if len(sub) != 4 {
+				return m
+			}
+			open, bodyRaw, close := sub[1], sub[2], sub[3]
+
+			// Optional CDATA wrapper support
+			body := bodyRaw
+			if len(body) >= 12 && strings.HasPrefix(body, "<![CDATA[") && strings.HasSuffix(body, "]]>") {
+				body = body[len("<![CDATA[") : len(body)-len("]]>")]
+			}
+
+			// Unescape XML entities (&#34;, &amp;, &lt;, &gt;, …) to get plain JSON text
+			body = html.UnescapeString(strings.TrimSpace(body))
+			j, ok := easyjson.JSONFromString(body)
+			if !ok {
+				// Not a JSON body — leave as is
+				return m
+			}
+
+			// Normalize using the easyjson.Normalize you added
+			j.Normalize()
+			norm := j.ToString()
+
+			// Escape back for XML text node (quotes don't need escaping in element text)
+			escaped := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(norm)
+			return open + escaped + close
+		})
+	}
+
+	originalFormat := format
+	// ----------------------------------------------------------------------------------
+
 	system.MsgOnErrorReturn(gWalkLoad())
 
 	payload := easyjson.NewJSONObjectWithKeyValue("depth", easyjson.NewJSON(depth))
@@ -351,7 +394,14 @@ func gWalkGetGraph(format string, root string, depth int, excludeVertex, exclude
 	fileJSON := om.Data.GetByPath("file").GetPtr()
 	fileJSON.Normalize()
 
-	return fileJSON.AsStringDefault(""), nil
+	// Graphml json body patch ----------------------------------------------------------
+	out := fileJSON.AsStringDefault("")
+	if originalFormat == "graphml" {
+		out = normalizeGraphMLJSONBodies(out)
+	}
+	// ----------------------------------------------------------------------------------
+
+	return out, nil
 }
 
 func gWalkSetGraph(format string, root string, data string) error {
