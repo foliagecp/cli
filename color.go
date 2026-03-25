@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -24,18 +25,21 @@ func colorJSON(v any, indent int, depth int) string {
 		if len(val) == 0 {
 			return "{}"
 		}
+		keys := make([]string, 0, len(val))
+		for k := range val {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
 		var b bytes.Buffer
 		b.WriteString("{\n")
-		i := 0
-		for k, child := range val {
+		for i, k := range keys {
 			b.WriteString(childPad)
 			fmt.Fprintf(&b, "%s%s\"%s\"%s: ", ansiBold, ansiBlue, k, ansiReset)
-			b.WriteString(colorJSON(child, indent, depth+1))
-			if i < len(val)-1 {
+			b.WriteString(colorJSON(val[k], indent, depth+1))
+			if i < len(keys)-1 {
 				b.WriteByte(',')
 			}
 			b.WriteByte('\n')
-			i++
 		}
 		b.WriteString(pad + "}")
 		return b.String()

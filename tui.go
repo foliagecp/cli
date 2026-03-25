@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -87,6 +88,10 @@ type tuiModel struct {
 	qCursor      int
 	qOffset      int
 
+	searchMode  bool
+	searchInput textinput.Model
+	searchQuery string
+
 	showAll bool // mirrors inspect -a: show link details in body panel
 
 	width  int
@@ -100,10 +105,17 @@ func newTuiModel(startID string) tuiModel {
 	ti.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
 	ti.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
 
+	si := textinput.New()
+	si.Placeholder = "search…"
+	si.CharLimit = 128
+	si.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
+	si.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
+
 	return tuiModel{
-		currentID:  startID,
-		loading:    true,
-		queryInput: ti,
+		currentID:   startID,
+		loading:     true,
+		queryInput:  ti,
+		searchInput: si,
 	}
 }
 
@@ -135,25 +147,63 @@ func fetchVertexCmd(id string, gen int) tea.Cmd {
 }
 
 // fetchLinksCmd loads all link details (phase 2). Knows total count from fvi.
+// Up to 10 links are fetched concurrently.
 func fetchLinksCmd(id string, gen int, fvi *fullVertexInfo) tea.Cmd {
 	return func() tea.Msg {
-		links := make([]displayLink, 0, len(fvi.outLinks)+len(fvi.inLinks))
-		var failed int
+		type result struct {
+			dl  displayLink
+			err error
+		}
+
+		all := make([]struct {
+			lid   linkId
+			isOut bool
+		}, 0, len(fvi.outLinks)+len(fvi.inLinks))
 		for _, lid := range fvi.outLinks {
-			if fli, err := getLinkFullInfo(lid); err == nil {
-				links = append(links, displayLink{info: fli, isOut: true})
-			} else {
-				failed++
-			}
+			all = append(all, struct {
+				lid   linkId
+				isOut bool
+			}{lid, true})
 		}
 		for _, lid := range fvi.inLinks {
-			if fli, err := getLinkFullInfo(lid); err == nil {
-				links = append(links, displayLink{info: fli, isOut: false})
-			} else {
+			all = append(all, struct {
+				lid   linkId
+				isOut bool
+			}{lid, false})
+		}
+
+		results := make([]result, len(all))
+		sem := make(chan struct{}, 10)
+		var wg sync.WaitGroup
+		for i, item := range all {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(i int, lid linkId, isOut bool) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				fli, err := getLinkFullInfo(lid)
+				if err != nil {
+					results[i] = result{err: err}
+				} else {
+					results[i] = result{dl: displayLink{info: fli, isOut: isOut}}
+				}
+			}(i, item.lid, item.isOut)
+		}
+		wg.Wait()
+
+		links := make([]displayLink, 0, len(all))
+		var failed int
+		for _, r := range results {
+			if r.err != nil {
 				failed++
+			} else {
+				links = append(links, r.dl)
 			}
 		}
 		sort.Slice(links, func(i, j int) bool {
+			if links[i].isOut != links[j].isOut {
+				return links[i].isOut
+			}
 			return links[i].info.id.name < links[j].info.id.name
 		})
 		var partialErr error
@@ -216,6 +266,7 @@ var (
 	styleIn      = lipgloss.NewStyle().Foreground(colorIn)
 	styleDim     = lipgloss.NewStyle().Foreground(colorDim)
 	styleMetaKey = lipgloss.NewStyle().Foreground(colorAccent)
+	styleTagKey  = lipgloss.NewStyle().Foreground(colorIn)
 	styleMetaVal = lipgloss.NewStyle().Foreground(lipgloss.Color("253"))
 
 	styleStatus = lipgloss.NewStyle().
@@ -228,6 +279,7 @@ var (
 
 	styleErr     = lipgloss.NewStyle().Foreground(colorErr)
 	styleLoading = lipgloss.NewStyle().Foreground(colorLoading)
+	styleSearch  = lipgloss.NewStyle().Background(lipgloss.Color("226")).Foreground(lipgloss.Color("16"))
 )
 
 // ── Dimensions ────────────────────────────────────────────────────────────────
@@ -426,6 +478,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.queryMode {
 		return m.updateQuery(msg)
 	}
+	if m.searchMode {
+		return m.updateSearch(msg)
+	}
 	return m.updateNav(msg)
 }
 
@@ -487,6 +542,22 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queryInput.Focus()
 			return m, textinput.Blink
 
+		case "f":
+			m.searchMode = true
+			m.searchInput.SetValue(m.searchQuery)
+			m.searchInput.Focus()
+			return m, textinput.Blink
+
+		case "esc":
+			if m.searchQuery != "" {
+				m.searchQuery = ""
+				m.searchInput.SetValue("")
+				if m.ready {
+					m.bodyVP.SetContent(m.bodyContent())
+				}
+			}
+			return m, nil
+
 		case "a":
 			m.showAll = !m.showAll
 			if m.ready {
@@ -537,6 +608,35 @@ func (m tuiModel) updateQuery(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.queryInput, cmd = m.queryInput.Update(msg)
+	return m, cmd
+}
+
+func (m tuiModel) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "esc":
+			m.searchMode = false
+			m.searchInput.Blur()
+			m.searchInput.SetValue("")
+			m.searchQuery = ""
+			if m.ready {
+				m.bodyVP.SetContent(m.bodyContent())
+			}
+			return m, nil
+		case "enter":
+			m.searchQuery = m.searchInput.Value()
+			m.searchMode = false
+			m.searchInput.Blur()
+			return m, nil
+		}
+	}
+	var cmd tea.Cmd
+	m.searchInput, cmd = m.searchInput.Update(msg)
+	m.searchQuery = m.searchInput.Value()
+	if m.ready {
+		m.bodyVP.SetContent(m.bodyContent())
+	}
 	return m, cmd
 }
 
@@ -605,6 +705,32 @@ func (m tuiModel) clampQueryScroll() tuiModel {
 	return m
 }
 
+// ── Search ────────────────────────────────────────────────────────────────────
+
+// highlightMatches wraps all case-insensitive occurrences of query in text
+// with styleSearch. Safe to call on strings that already contain ANSI codes
+// because ANSI escape sequences don't contain printable search characters.
+func highlightMatches(text, query string) string {
+	if query == "" {
+		return text
+	}
+	lq := strings.ToLower(query)
+	lt := strings.ToLower(text)
+	var b strings.Builder
+	i := 0
+	for i < len(lt) {
+		idx := strings.Index(lt[i:], lq)
+		if idx < 0 {
+			b.WriteString(text[i:])
+			break
+		}
+		b.WriteString(text[i : i+idx])
+		b.WriteString(styleSearch.Render(text[i+idx : i+idx+len(lq)]))
+		i += idx + len(lq)
+	}
+	return b.String()
+}
+
 // ── View ──────────────────────────────────────────────────────────────────────
 
 func (m tuiModel) bodyContent() string {
@@ -622,33 +748,37 @@ func (m tuiModel) bodyContent() string {
 		bodyStr = JSONStrPrettyString(m.fvi.body, 0, 2)
 	}
 
+	var result string
 	if !m.showAll || len(m.links) == 0 {
-		return bodyStr
+		result = bodyStr
+	} else {
+		var sb strings.Builder
+		sb.WriteString(bodyStr)
+
+		outCount, inCount := m.outCount(), m.inCount()
+		outIdx, inIdx := 0, 0
+		for _, dl := range m.links {
+			sb.WriteString("\n\n")
+			if dl.isOut {
+				outIdx++
+				sb.WriteString(styleOut.Render(fmt.Sprintf("→ [%d/%d] %s → %s", outIdx, outCount, dl.label(), dl.target())))
+			} else {
+				inIdx++
+				sb.WriteString(styleIn.Render(fmt.Sprintf("← [%d/%d] %s ← %s", inIdx, inCount, dl.label(), dl.target())))
+			}
+			if dl.info.tp != "" {
+				sb.WriteString("\n  " + styleMetaKey.Render("type:") + " " + styleMetaVal.Render(dl.info.tp))
+			}
+			if len(dl.info.tags) > 0 {
+				sb.WriteString("\n  " + styleTagKey.Render("tags:") + " " + styleMetaVal.Render(strings.Join(dl.info.tags, " ")))
+			}
+			if dl.info.body != nil && dl.info.body.IsNonEmptyObject() {
+				sb.WriteString("\n  " + JSONStrPrettyString(dl.info.body, 2, 2))
+			}
+		}
+		result = sb.String()
 	}
-
-	var sb strings.Builder
-	sb.WriteString(bodyStr)
-
-	outCount := m.outCount()
-	for i, dl := range m.links {
-		sb.WriteString("\n\n")
-		if dl.isOut {
-			sb.WriteString(styleOut.Render(fmt.Sprintf("→ [%d/%d] %s → %s", i+1, outCount, dl.label(), dl.target())))
-		} else {
-			sb.WriteString(styleIn.Render(fmt.Sprintf("← %s ← %s", dl.label(), dl.target())))
-		}
-		if dl.info.tp != "" {
-			sb.WriteString("  " + styleMetaKey.Render("type:") + " " + styleMetaVal.Render(dl.info.tp))
-		}
-		if len(dl.info.tags) > 0 {
-			sb.WriteString("  " + styleMetaKey.Render("tags:") + " " + styleMetaVal.Render(strings.Join(dl.info.tags, " ")))
-		}
-		if dl.info.body != nil && dl.info.body.IsNonEmptyObject() {
-			sb.WriteString("\n  " + JSONStrPrettyString(dl.info.body, 2, 2))
-		}
-	}
-
-	return sb.String()
+	return highlightMatches(result, m.searchQuery)
 }
 
 // vertexKindBadge returns a styled badge for the current vertex:
@@ -787,11 +917,16 @@ func (m tuiModel) renderLinkList(w, h int) string {
 			if dl.info.tp != "" {
 				tpPlain = " [" + dl.info.tp + "]"
 			}
+			// highlight on selected row (yellow on purple — visible enough)
+			hName := highlightMatches(fmt.Sprintf("%-16s", name), m.searchQuery)
+			hTarget := highlightMatches(target, m.searchQuery)
 			lines = append(lines, styleSelected.Width(w).Render(
-				fmt.Sprintf("▶ %s %-16s %s%s", dirPlain, name, target, tpPlain),
+				fmt.Sprintf("▶ %s %s %s%s", dirPlain, hName, hTarget, tpPlain),
 			))
 		} else {
-			lines = append(lines, fmt.Sprintf("  %s %-16s %s%s", dir, name, target, tp))
+			hName := highlightMatches(fmt.Sprintf("%-16s", name), m.searchQuery)
+			hTarget := highlightMatches(target, m.searchQuery)
+			lines = append(lines, fmt.Sprintf("  %s %s %s%s", dir, hName, hTarget, tp))
 		}
 	}
 
@@ -843,6 +978,8 @@ func (m tuiModel) renderStatus() string {
 	switch {
 	case m.queryMode:
 		s = "Query: " + m.queryInput.View() + styleHintSep.Render("  Esc:cancel")
+	case m.searchMode:
+		s = "Search: " + m.searchInput.View() + styleHintSep.Render("  Enter:keep  Esc:clear")
 	case len(m.queryResults) > 0:
 		sep := styleHintSep.Render("  ")
 		s = strings.Join([]string{
@@ -853,6 +990,15 @@ func (m tuiModel) renderStatus() string {
 		}, sep)
 	case m.queryResult != "":
 		s = "↳ " + m.queryResult
+	case m.searchQuery != "":
+		sep := styleHintSep.Render("  ")
+		s = styleSearch.Render(" / "+m.searchQuery+" ") + sep + strings.Join([]string{
+			hint("f", "edit"),
+			hint("Esc", "clear"),
+			hint("jk", "navigate"),
+			hint("Enter", "go"),
+			hint("q", "quit"),
+		}, sep)
 	case m.errMsg != "":
 		s = hint("r", "retry") + "  " + hint("q", "quit")
 	default:
@@ -863,6 +1009,7 @@ func (m tuiModel) renderStatus() string {
 			hint("b", "back"),
 			hint("a", "all"),
 			hint("/", "query"),
+			hint("f", "search"),
 			hint("r", "refresh"),
 			hint("g/G", "body ↑↓ half"),
 			hint("q", "quit"),
