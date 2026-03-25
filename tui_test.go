@@ -806,9 +806,9 @@ func TestHeader_ShowsHistoryBack(t *testing.T) {
 	m := makeModel("child", nil, &fvi)
 	m.history = []string{"root"}
 
-	out := m.renderHeader()
+	out := m.renderBreadcrumbs()
 	if !strings.Contains(out, "root") {
-		t.Errorf("header should show previous vertex when history non-empty, got:\n%s", out)
+		t.Errorf("breadcrumbs should show previous vertex when history non-empty, got:\n%s", out)
 	}
 }
 

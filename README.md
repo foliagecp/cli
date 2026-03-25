@@ -32,19 +32,25 @@ foliage-cli tui
 Opens a full-screen terminal interface for navigating the graph. Defaults to vertex `root` on first launch.
 
 ```
-◈ root  ← parent_vertex
-┌─ ◈ root ────────────────┐┌─ Links  ↓out:3  ↑in:1 ──────────┐
+◈ pak1/currentVertex
+← pak1/prev ← pak1/root
+┌─ ◈ pak1/currentVertex ──┐┌─ Links  ↓out:3  ↑in:1 ──────────┐
 │ {                       ││  → contains   child1              │
 │   "type": "folder",     ││▶ → ref        config  [ref]       │
 │   "name": "Root"        ││  ← parent     root                │
 │ }                       ││                                   │
 └─────────────────────────┘└───────────────────────────────────┘
-jk:navigate  Enter:go  b:back  a:all  /:query  r:refresh  g/G:body ↑↓ half  q:quit
+jk:navigate  Enter:go  b:back  a:all  /:query  f:search  r:refresh  q:quit
 ```
 
-The left panel shows the current vertex body (scroll half-page with `g`/`G` or use the mouse wheel). The right panel lists outgoing (`→`) and incoming (`←`) links. The current vertex ID is always visible in the header.
+- **Left panel** — current vertex body (JSON, syntax-highlighted). Scroll half-page with `g`/`G` or mouse wheel.
+- **Right panel** — outgoing (`→`) and incoming (`←`) links, sorted out-first then alphabetical.
+- **Header** — current vertex ID with loading / error indicators.
+- **Breadcrumbs** — second header row, shows up to 3 previous vertices (most-recent-first). Appears after first navigation.
 
 On narrow terminals (< 60 cols) the TUI switches to a compact single-column layout automatically.
+
+Links are loaded in parallel (adaptive worker pool sized to `NumCPU × 3`, min 4). Previously visited vertices are cached in-session for instant back navigation.
 
 ### Keybindings
 
@@ -54,15 +60,29 @@ On narrow terminals (< 60 cols) the TUI switches to a compact single-column layo
 | `k` / `↑` | Previous link (wraps to bottom) |
 | `Enter` | Navigate to selected vertex |
 | `b` / `Backspace` | Go back (history) |
-| `a` | Toggle all-details mode: show link types, tags, and bodies in the body panel |
+| `a` | Toggle all-details mode: show link type, tags, and body per link |
 | `g` / `G` | Scroll body panel up / down half page |
 | `/` | JPGQL query — results appear as a navigable list in the right panel |
-| `r` | Refresh / retry connection |
+| `f` | Open in-TUI search (live highlight matching text in body and links) |
+| `Esc` | Clear active search |
+| `c` | Copy current vertex ID to clipboard |
+| `r` | Refresh current vertex (evicts it from cache) |
+| `ctrl+r` | Clear entire session cache and reload |
 | `q` | Quit |
 
-### Query results mode
+### Search mode (`f`)
 
-After a `/` query executes, the right panel switches to result navigation:
+Typing after pressing `f` live-highlights all matches in the body panel and link list (case-insensitive). The current query is shown in the status bar.
+
+| Key | Action |
+|-----|--------|
+| Any text | Narrow the highlight |
+| `Enter` | Keep query active, return to navigation |
+| `Esc` | Clear search and return to navigation |
+
+### Query results mode (`/`)
+
+After a JPGQL query executes, the right panel switches to result navigation:
 
 | Key | Action |
 |-----|--------|
