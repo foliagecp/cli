@@ -91,6 +91,9 @@ func gWalkTo(id string) error {
 }
 
 func getLinkFullInfo(lid linkId) (fli fullLinkInfo, resErr error) {
+	if resErr = initDBClient(); resErr != nil {
+		return
+	}
 	fli.id = lid
 	fli.tags = []string{}
 
@@ -102,7 +105,7 @@ func getLinkFullInfo(lid linkId) (fli fullLinkInfo, resErr error) {
 
 	to := data.GetByPath("to").AsStringDefault("")
 	if len(to) == 0 {
-		resErr = fmt.Errorf("link's to vertex id is empty invalid")
+		resErr = fmt.Errorf("link %q has empty 'to' vertex id", lid.asStr())
 		return
 	}
 
@@ -117,6 +120,9 @@ func getLinkFullInfo(lid linkId) (fli fullLinkInfo, resErr error) {
 }
 
 func getVertexFullInfo(vertexId string) (fvi fullVertexInfo, resErr error) {
+	if resErr = initDBClient(); resErr != nil {
+		return
+	}
 	fvi.id = vertexId
 	fvi.outLinks = []linkId{}
 	fvi.inLinks = []linkId{}
@@ -162,7 +168,7 @@ func gWalkInspect(prettyPrint bool, allData bool) error {
 	fmt.Println("Body")
 	if fvi.body.IsNonEmptyObject() {
 		if prettyPrint {
-			fmt.Println(prefixIndent + JSONStrPrettyStringAnyway(fvi.body, len(prefixIndent), 2))
+			fmt.Println(prefixIndent + JSONStrPrettyString(fvi.body, len(prefixIndent), 2))
 		} else {
 			fmt.Println(prefixIndent, fvi.body.ToString())
 		}
@@ -185,7 +191,7 @@ func gWalkInspect(prettyPrint bool, allData bool) error {
 			linkBody := fli.body
 			if linkBody.IsNonEmptyObject() {
 				if prettyPrint {
-					fmt.Printf("%sBody: %s\n", prefixIndent, JSONStrPrettyStringAnyway(linkBody, len(prefixIndent)*2, 2))
+					fmt.Printf("%sBody: %s\n", prefixIndent, JSONStrPrettyString(linkBody, len(prefixIndent)*2, 2))
 				} else {
 					fmt.Println(prefixIndent+"Body: ", linkBody.ToString())
 				}
@@ -319,12 +325,13 @@ func gWalkRoutes(fd, bd uint, verbose int) error {
 	return nil
 }
 
+var reBDJ = regexp.MustCompile(`(?s)(<data\s+key=['"]bdj['"]>)(.*?)(</data>)`)
+
 func gWalkGetGraph(format string, root string, depth int, excludeVertex, excludeEdge []string) (string, error) {
 	// Graphml json body patch ----------------------------------------------------------
 	// normalizeGraphMLJSONBodies finds all <data key="bdj"> ... </data> entries,
 	// parses their content as JSON, normalizes it (arrays order, numeric unification),
 	// and writes it back (XML-escaped). XML bodies (key="bdx") are untouched.
-	var reBDJ = regexp.MustCompile(`(?s)(<data\s+key=['"]bdj['"]>)(.*?)(</data>)`)
 
 	normalizeGraphMLJSONBodies := func(graphml string) string {
 		return reBDJ.ReplaceAllStringFunc(graphml, func(m string) string {
@@ -361,6 +368,9 @@ func gWalkGetGraph(format string, root string, depth int, excludeVertex, exclude
 	originalFormat := format
 	// ----------------------------------------------------------------------------------
 
+	if err := initDBClient(); err != nil {
+		return "", err
+	}
 	system.MsgOnErrorReturn(gWalkLoad())
 
 	payload := easyjson.NewJSONObjectWithKeyValue("depth", easyjson.NewJSON(depth))
@@ -389,7 +399,7 @@ func gWalkGetGraph(format string, root string, depth int, excludeVertex, exclude
 		dbClient.Request(sfp.AutoRequestSelect, "functions.graph.api.object.debug.print.graph", root, &payload, nil),
 	)
 	if om.Status != sfMediators.SYNC_OP_STATUS_OK {
-		return "", fmt.Errorf(om.Details)
+		return "", fmt.Errorf("%s", om.Details)
 	}
 	fileJSON := om.Data.GetByPath("file").GetPtr()
 	fileJSON.Normalize()
@@ -405,6 +415,9 @@ func gWalkGetGraph(format string, root string, depth int, excludeVertex, exclude
 }
 
 func gWalkSetGraph(format string, root string, data string) error {
+	if err := initDBClient(); err != nil {
+		return err
+	}
 	system.MsgOnErrorReturn(gWalkLoad())
 
 	payload := easyjson.NewJSONObjectWithKeyValue("source", easyjson.NewJSON("payload"))
@@ -414,7 +427,7 @@ func gWalkSetGraph(format string, root string, data string) error {
 		dbClient.Request(sfp.AutoRequestSelect, "functions.graph.api.import", root, &payload, nil, 300*time.Second),
 	)
 	if om.Status != sfMediators.SYNC_OP_STATUS_OK {
-		return fmt.Errorf(om.Details)
+		return fmt.Errorf("%s", om.Details)
 	}
 	return nil
 }
@@ -454,6 +467,9 @@ func gWalkImportGraph(format string, graphData string) error {
 }
 
 func gWalkQuery(query string) error {
+	if err := initDBClient(); err != nil {
+		return err
+	}
 	system.MsgOnErrorReturn(gWalkLoad())
 
 	result, err := dbClient.Query.JPGQLCtraQuery(gWalkData.GetByPath("id").AsStringDefault("root"), query)

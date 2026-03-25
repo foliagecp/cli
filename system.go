@@ -5,31 +5,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/TylerBrock/colorjson"
 	"github.com/foliagecp/easyjson"
 )
 
-func JSONStrPrettyStringAnyway(j *easyjson.JSON, everyLineIndent int, innerIndent int) string {
-	ppStr, err := JSONStrPrettyString(j, everyLineIndent, innerIndent)
-	if err != nil {
-		return ppStr
-	}
-	return ppStr
-}
-
-func JSONStrPrettyString(j *easyjson.JSON, everyLineIndent int, innerIndent int) (string, error) {
-	f := colorjson.NewFormatter()
-	f.Indent = innerIndent
-	s, err := f.Marshal(j.Value)
-	if err != nil {
-		return "", err
-	}
-	pi := ""
-	for i := 0; i < everyLineIndent; i++ {
-		pi += " "
-	}
-	res := strings.ReplaceAll(string(s), "\n", "\n"+pi)
-	return res, nil
+func JSONStrPrettyString(j *easyjson.JSON, everyLineIndent int, innerIndent int) string {
+	s := colorJSON(j.Value, innerIndent, 0)
+	pi := strings.Repeat(" ", everyLineIndent)
+	res := strings.ReplaceAll(s, "\n", "\n"+pi)
+	return res
 }
 
 func expandFileName(fileName string) (string, error) {
