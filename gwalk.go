@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"html"
+	"math"
 	"os"
 	"regexp"
 	"strings"
@@ -369,6 +370,7 @@ func gWalkGetGraph(format string, root string, depth int, excludeVertex, exclude
 		payload.SetByPath("json2xml", easyjson.NewJSON(true))
 	}
 	payload.SetByPath("format", easyjson.NewJSON(format))
+	payload.SetByPath("delivery", easyjson.NewJSON("auto"))
 	// Build exclude arrays if provided
 	if len(excludeVertex) > 0 {
 		arr := easyjson.NewJSONArray().GetPtr()
@@ -389,13 +391,61 @@ func gWalkGetGraph(format string, root string, depth int, excludeVertex, exclude
 		dbClient.Request(sfp.AutoRequestSelect, "functions.graph.api.object.debug.print.graph", root, &payload, nil),
 	)
 	if om.Status != sfMediators.SYNC_OP_STATUS_OK {
-		return "", fmt.Errorf(om.Details)
+		return "", fmt.Errorf("%s", om.Details)
 	}
-	fileJSON := om.Data.GetByPath("file").GetPtr()
-	fileJSON.Normalize()
+
+	delivery := om.Data.GetByPath("delivery").AsStringDefault("inline")
+
+	var out string
+
+	switch delivery {
+	case "chunks":
+		sessionID := om.Data.GetByPath("session_id").AsStringDefault("")
+		vertexID := om.Data.GetByPath("vertex_id").AsStringDefault(root)
+		totalChunks := int(om.Data.GetByPath("total_chunks").AsNumericDefault(0))
+		totalBytes := int64(om.Data.GetByPath("total_bytes").AsNumericDefault(0))
+
+		if totalBytes < 0 || totalBytes > math.MaxInt {
+			return "", fmt.Errorf("export too large for in-memory assembly: %d bytes", totalBytes)
+		}
+
+		var buf strings.Builder
+		buf.Grow(int(totalBytes))
+
+		for i := 0; i < totalChunks; i++ {
+			chunkPayload := easyjson.NewJSONObject()
+			chunkPayload.SetByPath("export_action", easyjson.NewJSON("get_chunk"))
+			chunkPayload.SetByPath("session_id", easyjson.NewJSON(sessionID))
+			chunkPayload.SetByPath("chunk_index", easyjson.NewJSON(i))
+
+			chunkOM := sfMediators.OpMsgFromSfReply(
+				dbClient.Request(sfp.AutoRequestSelect, "functions.graph.api.object.debug.print.graph", vertexID, &chunkPayload, nil),
+			)
+			if chunkOM.Status != sfMediators.SYNC_OP_STATUS_OK {
+				return "", fmt.Errorf("chunk %d/%d: %s", i, totalChunks, chunkOM.Details)
+			}
+			buf.WriteString(chunkOM.Data.GetByPath("data").AsStringDefault(""))
+		}
+
+		// Best-effort cleanup: TTL on the server handles abandoned sessions
+		finishPayload := easyjson.NewJSONObject()
+		finishPayload.SetByPath("export_action", easyjson.NewJSON("finish_session"))
+		finishPayload.SetByPath("session_id", easyjson.NewJSON(sessionID))
+		_, _ = dbClient.Request(sfp.AutoRequestSelect, "functions.graph.api.object.debug.print.graph", vertexID, &finishPayload, nil)
+
+		out = buf.String()
+		// No Normalize() call needed here: buf contains the raw string content assembled from
+		// chunk data fields; it is not a JSON-wrapped leaf, so there is nothing to normalize.
+
+	default: // "inline" or old server (no delivery field)
+		fileJSON := om.Data.GetByPath("file").GetPtr()
+		fileJSON.Normalize() // no-op on a JSON string leaf, kept for parity with historic behavior
+		out = fileJSON.AsStringDefault("")
+	}
 
 	// Graphml json body patch ----------------------------------------------------------
-	out := fileJSON.AsStringDefault("")
+	// Applies only to "graphml" format. "graphml_json2xml" exports bodies as XML (bdx keys),
+	// not JSON (bdj keys), so there is nothing for the regex to normalize in that mode.
 	if originalFormat == "graphml" {
 		out = normalizeGraphMLJSONBodies(out)
 	}
@@ -414,7 +464,7 @@ func gWalkSetGraph(format string, root string, data string) error {
 		dbClient.Request(sfp.AutoRequestSelect, "functions.graph.api.import", root, &payload, nil, 300*time.Second),
 	)
 	if om.Status != sfMediators.SYNC_OP_STATUS_OK {
-		return fmt.Errorf(om.Details)
+		return fmt.Errorf("%s", om.Details)
 	}
 	return nil
 }
