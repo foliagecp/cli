@@ -95,6 +95,9 @@ func getLinkFullInfo(lid linkId) (fli fullLinkInfo, resErr error) {
 	fli.id = lid
 	fli.tags = []string{}
 
+	if resErr = initDBClient(); resErr != nil {
+		return
+	}
 	data, err := dbClient.Graph.VerticesLinkRead(fli.id.from, fli.id.name, true)
 	if err != nil {
 		resErr = err
@@ -122,6 +125,9 @@ func getVertexFullInfo(vertexId string) (fvi fullVertexInfo, resErr error) {
 	fvi.outLinks = []linkId{}
 	fvi.inLinks = []linkId{}
 
+	if resErr = initDBClient(); resErr != nil {
+		return
+	}
 	data, err := dbClient.Graph.VertexRead(vertexId, true)
 	if err != nil {
 		resErr = err
@@ -364,6 +370,9 @@ func gWalkGetGraph(format string, root string, depth int, excludeVertex, exclude
 
 	system.MsgOnErrorReturn(gWalkLoad())
 
+	if err := initDBClient(); err != nil {
+		return "", err
+	}
 	payload := easyjson.NewJSONObjectWithKeyValue("depth", easyjson.NewJSON(depth))
 	if format == "graphml_json2xml" {
 		format = "graphml"
@@ -457,6 +466,9 @@ func gWalkGetGraph(format string, root string, depth int, excludeVertex, exclude
 func gWalkSetGraph(format string, root string, data string) error {
 	system.MsgOnErrorReturn(gWalkLoad())
 
+	if err := initDBClient(); err != nil {
+		return err
+	}
 	payload := easyjson.NewJSONObjectWithKeyValue("source", easyjson.NewJSON("payload"))
 	payload.SetByPath("format", easyjson.NewJSON(format))
 	payload.SetByPath("data", easyjson.NewJSON(data))
@@ -506,6 +518,9 @@ func gWalkImportGraph(format string, graphData string) error {
 func gWalkQuery(query string) error {
 	system.MsgOnErrorReturn(gWalkLoad())
 
+	if err := initDBClient(); err != nil {
+		return err
+	}
 	result, err := dbClient.Query.JPGQLCtraQuery(gWalkData.GetByPath("id").AsStringDefault("root"), query)
 	if err != nil {
 		return err
