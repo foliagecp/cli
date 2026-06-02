@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"sync"
 
 	"github.com/foliagecp/sdk/clients/go/db"
 	"github.com/foliagecp/sdk/statefun/system"
@@ -17,16 +18,28 @@ var (
 	NatsRequestTimeoutSec int    = system.GetEnvMustProceed("NATS_REQUEST_TIMEOUT_SEC", 60)
 	FoliageCLIDir         string = system.GetEnvMustProceed("FOLIAGE_CLI_DIR", "~/.foliage-cli")
 
-	dbClient db.DBSyncClient
+	dbClient    db.DBSyncClient
+	dbMu        sync.Mutex
+	dbConnected bool
 )
 
-func main() {
+// initDBClient connects to NATS lazily. Idempotent — safe to call multiple times.
+func initDBClient() error {
+	dbMu.Lock()
+	defer dbMu.Unlock()
+	if dbConnected {
+		return nil
+	}
 	dbc, err := db.NewDBSyncClient(NatsURL, NatsRequestTimeoutSec, NatsHubDomain)
 	if err != nil {
-		log.Fatalln(err)
+		return err
 	}
 	dbClient = dbc
+	dbConnected = true
+	return nil
+}
 
+func main() {
 	if s, err := expandFileName(FoliageCLIDir); err != nil {
 		log.Panicln(err)
 	} else {
@@ -37,6 +50,13 @@ func main() {
 		Name:  "foliage-cli",
 		Usage: "Foliage command line interface",
 		Commands: []*cli.Command{
+			{
+				Name:  "tui",
+				Usage: "interactive graph browser (TUI)",
+				Action: func(cCtx *cli.Context) error {
+					return gWalkTUI()
+				},
+			},
 			{
 				Name:  "gwalk",
 				Usage: "traverse the graph",
@@ -202,7 +222,7 @@ func main() {
 		},
 	}
 
-	if err = app.Run(os.Args); err != nil {
+	if err := app.Run(os.Args); err != nil {
 		log.Fatal(err)
 	}
 }
