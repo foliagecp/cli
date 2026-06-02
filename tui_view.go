@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -90,6 +91,9 @@ func renderJSONValue(v interface{}, maxW int) string {
 	case string:
 		return styleMetaVal.Render(truncateCells(val, maxW))
 	case float64:
+		if val == math.Trunc(val) && math.Abs(val) < 1e18 {
+			return styleMetaVal.Render(fmt.Sprintf("%d", int64(val)))
+		}
 		return styleMetaVal.Render(fmt.Sprintf("%g", val))
 	case bool:
 		if val {
