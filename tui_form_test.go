@@ -501,3 +501,4 @@ func TestEditorDone_AppliesTextAndSurvivesClosedForm(t *testing.T) {
 // Key helpers for control chords the shared key() helper cannot express.
 func tea_ctrlS() tea.Msg { return tea.KeyMsg{Type: tea.KeyCtrlS} }
 func tea_ctrlR() tea.Msg { return tea.KeyMsg{Type: tea.KeyCtrlR} }
+func tea_ctrlT() tea.Msg { return tea.KeyMsg{Type: tea.KeyCtrlT} }

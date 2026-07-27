@@ -44,9 +44,10 @@ func openBodyEditForm(m tuiModel) (formState, bool) {
 	ed := newJSONEditor(*m.fvi.body, entity, w, h)
 
 	f := formState{
-		kind:   formBodyEdit,
-		title:  fmt.Sprintf("Edit %s body — %s", entityLabel(entity), m.currentID),
-		chrome: chromeFull,
+		kind:     formBodyEdit,
+		title:    fmt.Sprintf("Edit %s body — %s", entityLabel(entity), m.currentID),
+		chrome:   chromeFull,
+		template: m.bodyRegister,
 		ctx: formCtx{
 			fromID:   m.currentID,
 			fromKind: kind,
@@ -336,10 +337,10 @@ func submitDeleteLinkCmd(f formState) tea.Cmd {
 // one is about to run.
 func openLinkCreateForm(m tuiModel) (formState, string) {
 	if m.linking == nil {
-		return formState{}, "press a to anchor a source vertex first"
+		return formState{}, "press L on a source vertex first"
 	}
 	if m.linking.fromID == m.currentID {
-		return formState{}, "the anchor and the target are the same vertex"
+		return formState{}, "the source and the target are the same vertex"
 	}
 
 	toKind, toType := m.vertexKind()
@@ -385,7 +386,22 @@ func openLinkCreateForm(m tuiModel) (formState, string) {
 		}, formField{
 			key: "ltype", label: "link type", kind: fieldStatic,
 			static: "(derived from the types-link — checked on submit)",
-		})
+		},
+			// The claims. An object-link is governed by the types-link between
+			// the endpoints' types; naming a SUPER-type of either instead lets
+			// the link be governed by a schema declared further up. That is the
+			// whole of "supertype links", and the user never has to hear the
+			// term: they see "link these two, treating srv-1 as machine", and
+			// leaving both rows alone is the ordinary case.
+			formField{
+				key: "fromclaim", label: "from as", kind: fieldID,
+				value: f.ctx.fromType,
+				hint:  "a super-type of " + orDash(f.ctx.fromType) + " to link under, if not itself",
+			}, formField{
+				key: "toclaim", label: "to as", kind: fieldID,
+				value: toType,
+				hint:  "a super-type of " + orDash(toType) + " to link under, if not itself",
+			})
 	default:
 		fields = append(fields, formField{
 			key: "name", label: "name", kind: fieldID, required: true,
@@ -399,7 +415,10 @@ func openLinkCreateForm(m tuiModel) (formState, string) {
 		})
 	}
 
-	fields = append(fields, formField{key: "tags", label: "tags", kind: fieldTags})
+	fields = append(fields,
+		formField{key: "tags", label: "tags", kind: fieldTags},
+		formField{key: "body", label: "body", kind: fieldText,
+			hint: "inline JSON, or leave blank"})
 	f.fields = fields
 	f.cur = 1 // the endpoints row is informational; start on the first input
 
@@ -424,33 +443,51 @@ func lastLinkTypeOn(m tuiModel, from string) string {
 func submitLinkCreateCmd(f formState) tea.Cmd {
 	from, to := f.ctx.fromID, f.ctx.toID
 	tags := f.tags("tags")
-	entity := f.ctx.entity
 
 	name := f.value("name")
 	linkType := f.value("type")
 	olt := f.value("olt")
 	force := f.boolean("force")
 
+	body, bodyErr := parseInlineBody(f.value("body"))
+
+	// The tier is settled when the form opens; recomputing it from the entity
+	// here is what left `case entObject` unreachable and hid the object-object
+	// case inside a nested condition in the default arm.
+	tier := linkTierFor(f.ctx.fromKind, f.ctx.toKind, f.ctx.llMode)
+
+	// A claim that names something other than the endpoint's own type means
+	// the link is governed by a schema declared further up the hierarchy.
+	fromClaim, toClaim := f.value("fromclaim"), f.value("toclaim")
+	claimed := tier == tierObjectsLink &&
+		((fromClaim != "" && fromClaim != f.ctx.fromType) ||
+			(toClaim != "" && toClaim != f.ctx.toType))
+
 	return func() tea.Msg {
+		if bodyErr != "" {
+			return mutationResultMsg{
+				op: "link.create", target: stripDomain(from) + " → " + stripDomain(to),
+				res: opResult{status: opFailed, details: bodyErr},
+			}
+		}
 		var (
 			res opResult
 			op  string
 		)
-		switch entity {
-		case entTypesLink:
+		switch {
+		case tier == tierTypesLink:
 			op = "typeslink.create"
-			res = ops.typesLinkCreate(from, to, olt, tags, easyjson.NewJSONObject())
-		case entObject:
+			res = ops.typesLinkCreate(from, to, olt, tags, body)
+		case claimed:
+			op = "objectslink.super.create"
+			res = ops.superLinkCreate(from, to, orElse(fromClaim, f.ctx.fromType),
+				orElse(toClaim, f.ctx.toType), name, tags, body)
+		case tier == tierObjectsLink:
 			op = "objectslink.create"
-			res = ops.objectsLinkCreate(from, to, name, tags, easyjson.NewJSONObject())
+			res = ops.objectsLinkCreate(from, to, name, tags, body)
 		default:
-			if entity == entLink && f.ctx.fromKind == vkObject && f.ctx.toKind == vkObject && !f.ctx.llMode {
-				op = "objectslink.create"
-				res = ops.objectsLinkCreate(from, to, name, tags, easyjson.NewJSONObject())
-			} else {
-				op = "link.create"
-				res = ops.linkCreate(from, to, name, linkType, tags, easyjson.NewJSONObject(), force)
-			}
+			op = "link.create"
+			res = ops.linkCreate(from, to, name, linkType, tags, body, force)
 		}
 		return mutationResultMsg{
 			op:         op,
@@ -460,6 +497,27 @@ func submitLinkCreateCmd(f formState) tea.Cmd {
 			refresh:    true,
 		}
 	}
+}
+
+// parseInlineBody turns a one-line JSON field into a body. Blank means an empty
+// object, which is what every link create used to send unconditionally.
+func parseInlineBody(s string) (easyjson.JSON, string) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return easyjson.NewJSONObject(), ""
+	}
+	j, ok := easyjson.JSONFromString(s)
+	if !ok || !j.IsObject() {
+		return easyjson.NewJSONObject(), "body is not a JSON object: " + s
+	}
+	return j, ""
+}
+
+func orElse(s, fallback string) string {
+	if s != "" {
+		return s
+	}
+	return fallback
 }
 
 // ── Create menu ───────────────────────────────────────────────────────────────
@@ -786,6 +844,7 @@ func openLinkEditForm(m tuiModel, dl displayLink, focusKey string) (formState, s
 		title:       "Edit " + tier.noun() + " — " + stripDomain(owner) + " ──▶ " + stripDomain(target),
 		chrome:      chromeFull,
 		contextRows: linkEditContextRows(dl, tier),
+		template:    m.bodyRegister,
 		ctx: formCtx{
 			fromID:   owner,
 			toID:     target,

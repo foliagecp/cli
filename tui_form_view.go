@@ -69,12 +69,18 @@ func (m tuiModel) renderFormFull() string {
 	}
 
 	sep := styleHintSep.Render("  ")
-	hints := strings.Join([]string{
+	hintParts := []string{
 		hint("ctrl+s", "apply"),
 		hint("ctrl+r", "merge/replace"),
 		hint("ctrl+e", "$EDITOR"),
-		hint("Esc", "cancel"),
-	}, sep)
+	}
+	// Only advertised when there is something to paste. A key that does
+	// nothing is worse than a key that is not mentioned.
+	if f.template != "" {
+		hintParts = append(hintParts, hint("ctrl+t", "paste yank"))
+	}
+	hintParts = append(hintParts, hint("Esc", "cancel"))
+	hints := strings.Join(hintParts, sep)
 
 	rows := []string{title}
 	// Context the edge is addressed BY, and cannot be changed here: the API
@@ -272,7 +278,7 @@ var helpSections = []helpSection{
 		{"ctrl+s", "apply"},
 		{"ctrl+r", "switch MERGE ⇄ REPLACE"},
 		{"ctrl+e", "open $EDITOR"},
-		{"ctrl+t", "insert a template"},
+		{"ctrl+t", "paste the yanked body (only when there is one)"},
 		{"Esc", "cancel"},
 	}},
 	{"In a form", []helpEntry{

@@ -111,6 +111,9 @@ type formState struct {
 	// is about, as opposed to what it will write.
 	contextRows []string
 
+	// template is the yanked body ctrl+t pastes, captured when the form opens.
+	template string
+
 	// confirmation sub-state (delete flows)
 	confirm     bool
 	confirmWord string // "" ⇒ single-key y/n; otherwise must be typed exactly
@@ -352,6 +355,17 @@ func (f formState) handleKey(k string) (formState, formAction) {
 	case "ctrl+r":
 		if ed := f.jsonField(); ed != nil {
 			ed.replace = !ed.replace
+		}
+		return f, actNone
+
+	case "ctrl+t":
+		// Paste the yanked body. `y` has always written to a register and the
+		// help has always advertised this key, but nothing read the register
+		// and nothing handled the key — the feature was documented and absent
+		// for its whole existence.
+		if ed := f.jsonField(); ed != nil && f.template != "" {
+			ed.ta.SetValue(f.template)
+			ed.validate()
 		}
 		return f, actNone
 

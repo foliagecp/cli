@@ -372,3 +372,151 @@ func TestTier_StructuralEdgesNeedNoSecondRoundTrip(t *testing.T) {
 		t.Errorf("tier = %v with an empty cache, want tierTypesLink", got)
 	}
 }
+
+// ── Claimed super-types on a new object-link ──────────────────────────────────
+
+// objectAtWithType stands on an object of the named type.
+func objectPair(t *testing.T) tuiModel {
+	t.Helper()
+	m := makeModel("hub/rack-a", []displayLink{
+		{info: makeLinkInfo("hub/rack-a", instanceOfLinkName, "hub/rack", ltInstanceOf), isOut: true},
+	}, nil)
+	m.linking = &pendingLink{fromID: "hub/srv-1", kind: vkObject, typeName: "srv"}
+	return m
+}
+
+func TestLinkCreate_ClaimsDefaultToTheRealTypesAndStayOrdinary(t *testing.T) {
+	var calledPlain bool
+	withOps(t, graphOps{
+		objectsLinkCreate: func(string, string, string, []string, easyjson.JSON) opResult {
+			calledPlain = true
+			return opResult{status: opApplied}
+		},
+	})
+
+	m := objectPair(t)
+	m = update(m, key("L"))
+	if m.form == nil {
+		t.Fatal("committing a pending link should open the form")
+	}
+	if got := m.form.value("fromclaim"); got != "srv" {
+		t.Errorf("from-claim prefill = %q, want the object's real type", got)
+	}
+	if got := m.form.value("toclaim"); got != "rack" {
+		t.Errorf("to-claim prefill = %q, want the target's real type", got)
+	}
+
+	_, cmd := updateCmd(m, tea_ctrlS())
+	runCmd(cmd)
+	if !calledPlain {
+		t.Error("unchanged claims mean an ordinary objects-link")
+	}
+}
+
+func TestLinkCreate_ChangingAClaimLinksUnderTheSuperType(t *testing.T) {
+	var gotFromClaim, gotToClaim string
+	withOps(t, graphOps{
+		superLinkCreate: func(_, _, fc, tc, _ string, _ []string, _ easyjson.JSON) opResult {
+			gotFromClaim, gotToClaim = fc, tc
+			return opResult{status: opApplied}
+		},
+	})
+
+	m := objectPair(t)
+	m = update(m, key("L"))
+	m = focusField(m, "fromclaim")
+	for range "srv" {
+		m = update(m, keyBackspace())
+	}
+	m = typeText(m, "machine")
+
+	_, cmd := updateCmd(m, tea_ctrlS())
+	runCmd(cmd)
+
+	if gotFromClaim != "machine" || gotToClaim != "rack" {
+		t.Errorf("superLinkCreate claims = (%q,%q), want (machine, rack)", gotFromClaim, gotToClaim)
+	}
+}
+
+func TestLinkCreate_CarriesABody(t *testing.T) {
+	// Every create path used to send an empty object unconditionally, so a link
+	// could not be given a body at all without dropping to the shell.
+	var gotBody easyjson.JSON
+	withOps(t, graphOps{
+		linkCreate: func(_, _, _, _ string, _ []string, body easyjson.JSON, _ bool) opResult {
+			gotBody = body
+			return opResult{status: opApplied}
+		},
+	})
+
+	m := makeModel("hub/b", nil, nil)
+	m.linking = &pendingLink{fromID: "hub/a", kind: vkPlain}
+	m = update(m, key("L"))
+	m = focusField(m, "type")
+	m = typeText(m, "rel")
+	m = focusField(m, "body")
+	m = typeText(m, `{"weight":3}`)
+
+	_, cmd := updateCmd(m, tea_ctrlS())
+	runCmd(cmd)
+
+	if gotBody.GetByPath("weight").AsNumericDefault(0) != 3 {
+		t.Errorf("body = %s, want the one that was typed", gotBody.ToString())
+	}
+}
+
+func TestLinkCreate_RejectsABodyThatIsNotAnObject(t *testing.T) {
+	withOps(t, graphOps{})
+
+	m := makeModel("hub/b", nil, nil)
+	m.linking = &pendingLink{fromID: "hub/a", kind: vkPlain}
+	m = update(m, key("L"))
+	m = focusField(m, "type")
+	m = typeText(m, "rel")
+	m = focusField(m, "body")
+	m = typeText(m, "not json")
+
+	_, cmd := updateCmd(m, tea_ctrlS())
+	msg := runCmd(cmd).(mutationResultMsg)
+	if msg.res.status != opFailed {
+		t.Error("an unparseable body must fail loudly, not be silently dropped")
+	}
+}
+
+// ── Templates ─────────────────────────────────────────────────────────────────
+
+// TestTemplate_YankThenPaste closes a loop that was open for the whole life of
+// the feature: `y` wrote to a register nothing read, and the help advertised
+// ctrl+t, which nothing handled.
+func TestTemplate_YankThenPaste(t *testing.T) {
+	m := linkWithDetail(t, rawLink(), nil, numBody("weight", 7))
+	m = update(m, key("y"))
+	if m.bodyRegister == "" {
+		t.Fatal("y should have filled the register")
+	}
+
+	fvi := makeVertexInfo("hub/a", nil, nil)
+	m.fvi = &fvi
+	m = update(m, key("I")) // edit the vertex body
+	if m.form == nil {
+		t.Fatal("I should open the body editor")
+	}
+	if strings.Contains(m.form.jsonField().ta.Value(), "weight") {
+		t.Fatal("fixture: the vertex body should not already contain the yank")
+	}
+
+	m = update(m, tea_ctrlT())
+	if !strings.Contains(m.form.jsonField().ta.Value(), "weight") {
+		t.Error("ctrl+t should paste the yanked body — it has been advertised and absent")
+	}
+}
+
+func TestTemplate_NotAdvertisedWithNothingToPaste(t *testing.T) {
+	fvi := makeVertexInfo("hub/a", nil, nil)
+	m := makeModel("hub/a", nil, &fvi)
+	m = update(m, key("i"))
+
+	if strings.Contains(stripANSI(m.renderFormFull()), "ctrl+t") {
+		t.Error("a key that would do nothing must not be offered")
+	}
+}
