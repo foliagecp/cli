@@ -40,14 +40,18 @@ func makeVertexInfo(id string, outLinks, inLinks []linkId) fullVertexInfo {
 	}
 }
 
+// makeLinkInfo builds a link the way the FAST path does: target and type only.
+//
+// It used to fill body and tags as well, which no production path does — the
+// vertex read deliberately skips them. That made every test agree with a model
+// state the server never produces, and is why nothing caught the tags editor
+// opening blank over links that had tags. Details now come from linkDetails,
+// so a test that needs them says so explicitly.
 func makeLinkInfo(from, name, to, tp string) fullLinkInfo {
-	body := easyjson.NewJSONObject()
 	return fullLinkInfo{
-		id:   linkId{from: from, name: name},
-		body: body.GetPtr(),
-		to:   to,
-		tp:   tp,
-		tags: []string{},
+		id: linkId{from: from, name: name},
+		to: to,
+		tp: tp,
 	}
 }
 
@@ -1508,40 +1512,61 @@ func TestStatus_SearchModeHints(t *testing.T) {
 // ── vertexKindBadge ───────────────────────────────────────────────────────────
 
 func TestBadge_TypeVertex(t *testing.T) {
-	fvi := makeVertexInfo("root", nil, nil)
+	// The defining edge is the types root pointing IN at the type. The old
+	// fixture had it pointing the wrong way and still passed, because the old
+	// classifier ignored direction — which is how hub/root came to be badged
+	// [type] and offered as a home for new objects.
+	fvi := makeVertexInfo("hub/srv", nil, nil)
 	links := []displayLink{
-		{info: makeLinkInfo("hub/types", "tl", "root", ""), isOut: false},
+		{info: makeLinkInfo("hub/types", "srv", "hub/srv", "__type"), isOut: false},
 	}
-	m := makeModel("root", links, &fvi)
+	m := makeModel("hub/srv", links, &fvi)
 
 	if !strings.Contains(m.vertexKindBadge(), "[type]") {
-		t.Error("vertex connected to hub/types should show [type] badge")
+		t.Errorf("a vertex the types root links to is a type, got %q", m.vertexKindBadge())
 	}
 }
 
-func TestBadge_ObjectVertex(t *testing.T) {
-	fvi := makeVertexInfo("root", nil, nil)
+func TestBadge_ObjectVertexNamesItsType(t *testing.T) {
+	fvi := makeVertexInfo("hub/srv-1", nil, nil)
 	links := []displayLink{
-		{info: makeLinkInfo("root", "mytype", "hub/objects", "__type"), isOut: true},
-		{info: makeLinkInfo("root", "myobj", "hub/objects", ""), isOut: true},
+		{info: makeLinkInfo("hub/objects", "hub/srv-1", "hub/srv-1", "__object"), isOut: false},
+		{info: makeLinkInfo("hub/srv-1", "type", "hub/srv", "__type"), isOut: true},
 	}
-	m := makeModel("root", links, &fvi)
+	m := makeModel("hub/srv-1", links, &fvi)
 
-	badge := m.vertexKindBadge()
-	// stripDomain removes the "hub/" prefix, so expect the stripped name.
-	if !strings.Contains(badge, "objects") {
-		t.Errorf("object vertex badge should reference type name, got %q", badge)
+	if badge := m.vertexKindBadge(); !strings.Contains(badge, "object of srv") {
+		t.Errorf("badge = %q, want it to name the type", badge)
 	}
 }
 
-func TestBadge_NoBadge(t *testing.T) {
-	fvi := makeVertexInfo("root", nil, nil)
+// TestBadge_RootIsBuiltInNotAType is the regression test for the complaint.
+// hub/root has an OUTGOING __types edge at hub/types; a type has an INCOMING
+// __type edge from it. One character and one direction apart.
+func TestBadge_RootIsBuiltInNotAType(t *testing.T) {
+	fvi := makeVertexInfo("hub/root", nil, nil)
 	links := []displayLink{
-		{info: makeLinkInfo("root", "l", "some/other", ""), isOut: true},
+		{info: makeLinkInfo("hub/root", "types", "hub/types", "__types"), isOut: true},
+		{info: makeLinkInfo("hub/root", "objects", "hub/objects", "__objects"), isOut: true},
 	}
-	m := makeModel("root", links, &fvi)
+	m := makeModel("hub/root", links, &fvi)
 
-	if badge := m.vertexKindBadge(); badge != "" {
-		t.Errorf("vertex without type/object links should have empty badge, got %q", badge)
+	if k, _ := m.vertexKind(); k != vkStructural {
+		t.Fatalf("hub/root classified as %v, want vkStructural", k)
+	}
+	if badge := m.vertexKindBadge(); strings.Contains(badge, "[type]") {
+		t.Errorf("hub/root badged %q — root is not a type", badge)
+	}
+}
+
+func TestBadge_PlainVertexStillSaysSo(t *testing.T) {
+	fvi := makeVertexInfo("hub/x", nil, nil)
+	links := []displayLink{
+		{info: makeLinkInfo("hub/x", "l", "some/other", ""), isOut: true},
+	}
+	m := makeModel("hub/x", links, &fvi)
+
+	if badge := m.vertexKindBadge(); !strings.Contains(badge, "[vertex]") {
+		t.Errorf("badge = %q — a plain vertex must say what it is, not go silent", badge)
 	}
 }

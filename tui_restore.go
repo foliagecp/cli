@@ -10,10 +10,17 @@ package main
 
 // invalidate evicts specific vertices from the cache. Empty ids are ignored so
 // callers can pass optional endpoints without guarding each one.
+//
+// Ids are canonicalised, and that is load-bearing rather than tidy: cache keys
+// are always domain-qualified, while a form field or a create flow naturally
+// holds the bare name the user typed. Evicting `srv` while the entry sits under
+// `hub/srv` is a silent no-op — which is exactly why a freshly created object
+// did not appear on its type until the cache happened to be dropped for some
+// other reason.
 func (m tuiModel) invalidate(ids ...string) tuiModel {
 	for _, id := range ids {
 		if id != "" {
-			delete(m.cache, id)
+			delete(m.cache, canonID(id))
 		}
 	}
 	return m
@@ -26,7 +33,7 @@ func (m tuiModel) invalidate(ids ...string) tuiModel {
 // sake of saving one refetch.
 func (m tuiModel) invalidateAll() tuiModel {
 	m.cache = make(map[string]cachedVertex)
-	return m
+	return m.forgetLinkDetails()
 }
 
 // ── View-state preservation ───────────────────────────────────────────────────

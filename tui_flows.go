@@ -287,44 +287,6 @@ func submitDeleteLinkCmd(f formState) tea.Cmd {
 
 // ── Link creation ─────────────────────────────────────────────────────────────
 
-// linkTier is which API a new link should go through.
-type linkTier int
-
-const (
-	tierRawLink linkTier = iota
-	tierTypesLink
-	tierObjectsLink
-)
-
-// linkTierFor decides the API from the two endpoints. With the low-level
-// toggle on it is always the raw one — that is the whole point of the toggle.
-func linkTierFor(from, to vertexKind, llMode bool) linkTier {
-	if llMode {
-		return tierRawLink
-	}
-	switch {
-	case from == vkType && to == vkType:
-		return tierTypesLink
-	case from == vkObject && to == vkObject:
-		return tierObjectsLink
-	default:
-		// A type↔object or anything involving a plain vertex has no
-		// high-level meaning; the raw API is the honest choice.
-		return tierRawLink
-	}
-}
-
-func (t linkTier) title() string {
-	switch t {
-	case tierTypesLink:
-		return "New types-link"
-	case tierObjectsLink:
-		return "New objects-link"
-	default:
-		return "New raw link (low level)"
-	}
-}
-
 // openLinkCreateForm builds the link form from the anchor to the current
 // vertex. The chosen API tier is in the title so the user can always see which
 // one is about to run.
@@ -489,7 +451,7 @@ func (e menuEntry) available() bool { return e.unavailableAt == "" && e.why == "
 func createMenuFor(m tuiModel) []menuEntry {
 	kind, typeName := m.vertexKind()
 	bare := stripDomain(m.currentID)
-	typesRoot := NatsHubDomain + "/types"
+	typesRoot := hubID("types")
 
 	linkLabel := "link — start here, walk to the target, press L again"
 	if m.linking != nil {
@@ -518,7 +480,7 @@ func createMenuFor(m tuiModel) []menuEntry {
 	case kind == vkObject && typeName != "":
 		out = append(out, menuEntry{
 			key: "o", label: "object of " + typeName,
-			unavailableAt: typeName,
+			unavailableAt: canonID(typeName),
 			why:           "objects are created from their type",
 			kind:          formObjectCreate,
 		})
@@ -618,6 +580,8 @@ func openObjectCreateForm(m tuiModel) formState {
 		fields: []formField{
 			{key: "id", label: "id", kind: fieldID, required: true,
 				hint: "will create " + dom + "/<id>"},
+			// Shown bare because that is how the user thinks of it; the
+			// canonical form the cache is keyed by comes from ctx.fromID.
 			{key: "type", label: "type", kind: fieldStatic, static: stripDomain(m.currentID)},
 		},
 	}
@@ -639,17 +603,23 @@ func openSubTypeForm(m tuiModel) formState {
 	return f.validate()
 }
 
-func domainOf(id string) string {
-	if i := strings.Index(id, "/"); i > 0 {
-		return id[:i]
-	}
-	return NatsHubDomain
-}
-
 func submitCreateCmd(f formState) tea.Cmd {
+	// Ids are canonicalised before they go anywhere near the cache. The wire
+	// call still gets the bare name — the server resolves it — but `navTo` and
+	// `invalidate` must name the vertex the way the cache keys it, or the
+	// eviction silently misses and the browser keeps serving the link list it
+	// captured before the write. That is the whole of "I created an object and
+	// there is no link from its type to it": the link existed, the screen was
+	// a snapshot from before it did.
+	dom := f.ctx.domain
+	if dom == "" {
+		dom = NatsHubDomain
+	}
+
 	switch f.kind {
 	case formVertexCreate:
 		id := f.value("id")
+		canon := canonIDIn(id, dom)
 		from := f.ctx.fromID
 		linkName, linkType := f.value("linkname"), f.value("linktype")
 		return func() tea.Msg {
@@ -665,25 +635,28 @@ func submitCreateCmd(f formState) tea.Cmd {
 				linkRes.details = "vertex created but linking it failed: " + linkRes.details
 				return mutationResultMsg{
 					op: "vertex.create", target: id, res: linkRes,
-					invalidate: []string{id, from}, refresh: true,
+					invalidate: []string{canon, from}, refresh: true,
 				}
 			}
 			return mutationResultMsg{
 				op: "vertex.create", target: id, res: res,
-				invalidate: []string{id, from},
-				navTo:      id, // land on what was just made
+				invalidate: []string{canon, from},
+				navTo:      canon, // land on what was just made
 			}
 		}
 	case formTypeCreate:
 		name := f.value("name")
+		// Type operations are redirected to the hub wherever the user browses,
+		// so a type is always a hub vertex regardless of where it was created.
+		canon := canonID(name)
 		return func() tea.Msg {
 			res := ops.typeCreate(name, easyjson.NewJSONObject())
 			msg := mutationResultMsg{
 				op: "type.create", target: name, res: res,
-				invalidate: []string{name, NatsHubDomain + "/types"},
+				invalidate: []string{canon, hubID("types")},
 			}
 			if res.status != opFailed {
-				msg.navTo = name
+				msg.navTo = canon
 			} else {
 				msg.refresh = true
 			}
@@ -691,14 +664,19 @@ func submitCreateCmd(f formState) tea.Cmd {
 		}
 	case formObjectCreate:
 		id, tp := f.value("id"), f.value("type")
+		canon := canonIDIn(id, dom)
+		// ctx.fromID is the type vertex the user is standing on, already in
+		// canonical form — which is exactly the cache entry that has to be
+		// evicted for the new instance to show up on it.
+		typeCanon := f.ctx.fromID
 		return func() tea.Msg {
 			res := ops.objectCreate(id, tp, easyjson.NewJSONObject())
 			msg := mutationResultMsg{
 				op: "object.create", target: id, res: res,
-				invalidate: []string{id, tp, NatsHubDomain + "/objects"},
+				invalidate: []string{canon, typeCanon, hubID("objects")},
 			}
 			if res.status != opFailed {
-				msg.navTo = id
+				msg.navTo = canon
 			} else {
 				msg.refresh = true
 			}

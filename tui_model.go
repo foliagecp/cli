@@ -305,6 +305,14 @@ type tuiModel struct {
 	// linking is a link-in-progress: source chosen, target being walked to.
 	linking *pendingLink
 
+	// linkDetails caches the tags and body of edges the user has looked at.
+	// Keyed by (owner, name) — the address the API uses — so an edge is the
+	// same entry whichever of its two endpoints you are standing on.
+	linkDetails map[linkKey]linkDetail
+
+	// linkPeek is the edge the cursor is resting on, awaiting its debounce.
+	linkPeek linkKey
+
 	// bodyRegister holds a yanked body, offered as a template when creating
 	// or editing another entity. Navigating to a sibling, pressing y, and
 	// coming back is how "copy the body of an existing object" works without
@@ -378,54 +386,6 @@ func (m tuiModel) refreshBody() tuiModel {
 	return m
 }
 
-// ── Vertex classification ─────────────────────────────────────────────────────
-
-type vertexKind int
-
-const (
-	vkPlain  vertexKind = iota // a bare graph vertex — only the low-level API applies
-	vkType                     // a CMDB type: linked from the built-in `types` root
-	vkObject                   // a CMDB object: linked from `objects`, with a __type out-link
-)
-
-// vertexKind classifies the current vertex from its links, and for an object
-// also returns its type name.
-//
-// The precedence matters and is not arbitrary: a CMDB types-link is stored as a
-// `__type`-typed edge — the SAME link type an object uses for its instance-of
-// edge — so a `__type` out-link alone cannot tell a type vertex from an object.
-// Membership in the `types` topology is the discriminator and must be checked
-// first. This is the ordering vertexKindBadge has always relied on; extracting
-// it here keeps the CRUD flows from re-deriving it (and getting it wrong).
-func (m tuiModel) vertexKind() (vertexKind, string) {
-	typesID := NatsHubDomain + "/types"
-	objectsID := NatsHubDomain + "/objects"
-	isObject, isType := false, false
-	typeName := ""
-	for _, dl := range m.links {
-		target := dl.target()
-		if target == typesID {
-			isType = true
-		}
-		if target == objectsID {
-			isObject = true
-		}
-		if dl.isOut && dl.info.tp == "__type" {
-			typeName = stripDomain(target)
-		}
-	}
-	if isType {
-		return vkType, ""
-	}
-	// An object whose __type link is missing (a half-written vertex) stays
-	// vkPlain: we genuinely cannot name its type, and claiming otherwise would
-	// send HL calls that the server will reject.
-	if isObject && typeName != "" {
-		return vkObject, typeName
-	}
-	return vkPlain, ""
-}
-
 // cursorLink returns the displayLink at the active cursor (only for flatLink items).
 func (m tuiModel) cursorLink() (displayLink, bool) {
 	flat := m.activeFlat()
@@ -464,6 +424,7 @@ func newTuiModel(startID string) tuiModel {
 		searchInput: si,
 		exportInput: ei,
 		cache:       make(map[string]cachedVertex),
+		linkDetails: make(map[linkKey]linkDetail),
 		focus:       panelOut,
 	}
 }
@@ -472,9 +433,9 @@ func gWalkTUI() error {
 	if err := gWalkLoad(); err != nil {
 		return err
 	}
-	startID := gWalkData.GetByPath("id").AsStringDefault("")
+	startID := canonID(gWalkData.GetByPath("id").AsStringDefault(""))
 	if startID == "" {
-		startID = "root"
+		startID = hubID("root")
 		_ = gWalkTo(startID)
 	}
 	p := tea.NewProgram(newTuiModel(startID), tea.WithAltScreen())
@@ -484,7 +445,12 @@ func gWalkTUI() error {
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 
+// fetchVertexCmd loads a vertex. It canonicalises the id first, and every id
+// the model stores flows from the msg it returns — so this and cacheHitCmd are
+// the choke points that keep m.currentID, m.cache, m.history and the gwalk
+// cursor file all speaking the same form.
 func fetchVertexCmd(id string, gen int) tea.Cmd {
+	id = canonID(id)
 	return func() tea.Msg {
 		if err := initDBClient(); err != nil {
 			return vertexInfoMsg{id: id, gen: gen, err: err}
@@ -498,6 +464,7 @@ func fetchVertexCmd(id string, gen int) tea.Cmd {
 }
 
 func cacheHitCmd(id string, gen int, cv cachedVertex) tea.Cmd {
+	id = canonID(id)
 	return func() tea.Msg {
 		return vertexLoadedMsg{id: id, gen: gen, fvi: cv.fvi, links: cv.links}
 	}

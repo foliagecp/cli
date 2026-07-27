@@ -460,17 +460,25 @@ func (m tuiModel) renderQueryResults(w, h int) string {
 
 // ── Body panel badge ──────────────────────────────────────────────────────────
 
-// vertexKindBadge renders the classification computed by vertexKind
-// (tui_model.go). Behaviour is unchanged from when the classification lived
-// here inline.
+// vertexKindBadge names what the user is standing on.
+//
+// EVERY kind gets a badge, including the plain one. The classification decides
+// which entries the create menu offers and which API a body edit uses, so it
+// has to be on screen — an unbadged vertex used to mean "plain", "half-written
+// object" and "the classifier has no opinion" all at once, which left the menu
+// looking arbitrary. A structural vertex says so, and that alone is the reason
+// `hub/root [built-in]` can no longer be mistaken for something to hang
+// objects off.
 func (m tuiModel) vertexKindBadge() string {
-	switch k, typeName := m.vertexKind(); k {
-	case vkType:
-		return " " + styleMetaKey.Render("[type]")
-	case vkObject:
-		return " " + styleMetaKey.Render("["+typeName+"]")
+	k, typeName := m.vertexKind()
+	style := styleMetaKey
+	switch k {
+	case vkPlain, vkStructural:
+		style = styleDim
+	case vkBrokenObject:
+		style = styleErr
 	}
-	return ""
+	return " " + style.Render("["+k.label(typeName)+"]")
 }
 
 // ── Narrow layout (single-column fallback) ────────────────────────────────────
@@ -566,13 +574,6 @@ func highlightMatches(text, query string) string {
 }
 
 // ── Header, breadcrumbs, status ───────────────────────────────────────────────
-
-func stripDomain(id string) string {
-	if i := strings.Index(id, "/"); i >= 0 {
-		return id[i+1:]
-	}
-	return id
-}
 
 func (m tuiModel) breadcrumbs() string {
 	if len(m.history) == 0 || m.width <= 0 {

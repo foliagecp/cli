@@ -77,7 +77,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.errMsg += "persist failed: " + err.Error()
 		}
-		return m, fetchDepth2TypesCmd(m.loadGen, m.links)
+		m, peek := m.peekCursorLink()
+		return m, tea.Batch(fetchDepth2TypesCmd(m.loadGen, m.links), peek)
 
 	case vertexInfoMsg:
 		if msg.gen != m.loadGen {
@@ -141,7 +142,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.errMsg += "persist failed: " + err.Error()
 		}
-		return m, fetchDepth2TypesCmd(m.loadGen, m.links)
+		m, peek := m.peekCursorLink()
+		return m, tea.Batch(fetchDepth2TypesCmd(m.loadGen, m.links), peek)
 
 	case queryResultMsg:
 		if msg.gen != m.loadGen {
@@ -172,6 +174,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queryResult = styleDim.Render("✓ saved → " + msg.file)
 		}
 		return m, nil
+
+	case linkPeekMsg:
+		return m.applyLinkPeek(msg)
+
+	case linkDetailMsg:
+		if msg.gen != m.loadGen {
+			return m, nil
+		}
+		return m.applyLinkDetail(msg), nil
 
 	case mutationResultMsg:
 		// Never gen-guarded: the write already happened on the server, so
@@ -237,23 +248,19 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 
-		case "j", "down":
-			flat := m.activeFlat()
-			if len(flat) > 0 {
-				m = m.setActiveCursor(nextSelectable(flat, m.activeCursorVal(), +1))
-				m = m.clampScroll()
-				m.queryResult = ""
+		case "j", "down", "k", "up":
+			dir := +1
+			if msg.String() == "k" || msg.String() == "up" {
+				dir = -1
 			}
-			return m, nil
-
-		case "k", "up":
 			flat := m.activeFlat()
-			if len(flat) > 0 {
-				m = m.setActiveCursor(nextSelectable(flat, m.activeCursorVal(), -1))
-				m = m.clampScroll()
-				m.queryResult = ""
+			if len(flat) == 0 {
+				return m, nil
 			}
-			return m, nil
+			m = m.setActiveCursor(nextSelectable(flat, m.activeCursorVal(), dir))
+			m = m.clampScroll()
+			m.queryResult = ""
+			return m.peekCursorLink()
 
 		case "enter":
 			if m.loading {
@@ -271,19 +278,8 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !ok {
 					return m, nil
 				}
-				target := dl.target()
-				if target == "" {
-					return m, nil
-				}
-				m.history = append(m.history, m.currentID)
 				m.queryResult = ""
-				m.loadGen++
-				if cv, ok := m.cache[target]; ok {
-					return m, cacheHitCmd(target, m.loadGen, cv)
-				}
-				m.loading = true
-				m.linksTotal = 0
-				return m, fetchVertexCmd(target, m.loadGen)
+				return m.navigateTo(dl.target())
 			case flatTypeGroup:
 				m = m.toggleCollapse(item)
 			}
@@ -312,24 +308,18 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "h", "left":
 			m.focus = panelIn
-			return m, nil
+			return m.peekCursorLink()
 
 		case "l", "right":
 			m.focus = panelOut
-			return m, nil
+			return m.peekCursorLink()
 
 		case "b", "backspace":
 			if len(m.history) > 0 {
 				prev := m.history[len(m.history)-1]
 				m.history = m.history[:len(m.history)-1]
 				m.queryResult = ""
-				m.loadGen++
-				if cv, ok := m.cache[prev]; ok {
-					return m, cacheHitCmd(prev, m.loadGen, cv)
-				}
-				m.loading = true
-				m.linksTotal = 0
-				return m, fetchVertexCmd(prev, m.loadGen)
+				return m.jumpTo(prev)
 			}
 			return m, nil
 
@@ -510,6 +500,7 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "ctrl+r":
 			m.cache = make(map[string]cachedVertex)
+			m = m.forgetLinkDetails()
 			m.loading = true
 			m.linksTotal = 0
 			m.queryResult = ""
@@ -530,7 +521,7 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loadGen++
 			m.loading = true
 			m.linksTotal = 0
-			return m, fetchVertexCmd("root", m.loadGen)
+			return m, fetchVertexCmd(hubID("root"), m.loadGen)
 
 		case "g":
 			m.bodyVP.HalfPageUp()
@@ -676,7 +667,7 @@ func (m tuiModel) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// launch of `tui` (and `gwalk inspect`) would fail to load at all.
 		// Decided here, before the delete, while the history is still intact.
 		if f.kind == formDeleteVertex && f.ctx.fromID == m.currentID {
-			m.pendingNavAfterDelete = "root"
+			m.pendingNavAfterDelete = hubID("root")
 			if n := len(m.history); n > 0 {
 				m.pendingNavAfterDelete = m.history[n-1]
 				m.history = m.history[:n-1]
@@ -703,11 +694,32 @@ func (m tuiModel) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // navigateTo walks to a vertex, pushing the current one onto the history.
-func (m tuiModel) navigateTo(id string) (tea.Model, tea.Cmd) {
+//
+// This is the ONE way to move. There used to be four copies of it — Enter on a
+// link, `b`, the create menu and the query-result list each open-coded the same
+// six lines — and they disagreed about the id form, so the same vertex could
+// end up cached twice under `srv` and `hub/srv`.
+func (m tuiModel) navigateTo(id string) (tuiModel, tea.Cmd) {
+	id = canonID(id)
 	if id == "" || id == m.currentID {
 		return m, nil
 	}
 	m.history = append(m.history, m.currentID)
+	// Deliberately does NOT clear the toast: several callers set one that
+	// explains why they are moving you (the create menu says where types live
+	// before taking you there), and clearing here would erase the explanation
+	// in the same keystroke that earns it. Callers that want a clean slate
+	// clear it themselves.
+	return m.jumpTo(id)
+}
+
+// jumpTo loads a vertex without touching the history — for going back, and for
+// landing on something just created.
+func (m tuiModel) jumpTo(id string) (tuiModel, tea.Cmd) {
+	id = canonID(id)
+	if id == "" {
+		return m, nil
+	}
 	m.loadGen++
 	if cv, ok := m.cache[id]; ok {
 		return m, cacheHitCmd(id, m.loadGen, cv)
@@ -794,6 +806,10 @@ func (m tuiModel) applyMutationResult(msg mutationResultMsg) (tea.Model, tea.Cmd
 	} else {
 		m = m.invalidate(msg.invalidate...)
 	}
+	// Any write can rewrite the edges hanging off the vertices it touched, and
+	// an edge detail is one small read to recover. Keeping a stale tag list
+	// would be the same class of bug as the stale link list.
+	m = m.forgetLinkDetails()
 
 	if navTo != "" {
 		m.loadGen++
@@ -922,17 +938,7 @@ func (m tuiModel) updateNavQueryResults(msg tea.Msg) (tea.Model, tea.Cmd) {
 			target := m.queryResults[m.qCursor]
 			m.queryResults = nil
 			m.queryResult = ""
-			if target == m.currentID {
-				return m, nil
-			}
-			m.history = append(m.history, m.currentID)
-			m.loadGen++
-			if cv, ok := m.cache[target]; ok {
-				return m, cacheHitCmd(target, m.loadGen, cv)
-			}
-			m.loading = true
-			m.linksTotal = 0
-			return m, fetchVertexCmd(target, m.loadGen)
+			return m.navigateTo(target)
 		case "esc", "b", "backspace":
 			m.queryResults = nil
 			m.queryResult = ""

@@ -241,8 +241,8 @@ func TestDelete_FallsBackToRootWithNoHistory(t *testing.T) {
 	m = update(m, key("D"))
 	m, _ = updateCmd(m, key("y"))
 
-	if m.pendingNavAfterDelete != "root" {
-		t.Errorf("pendingNavAfterDelete = %q, want root", m.pendingNavAfterDelete)
+	if m.pendingNavAfterDelete != hubID("root") {
+		t.Errorf("pendingNavAfterDelete = %q, want %q", m.pendingNavAfterDelete, hubID("root"))
 	}
 }
 

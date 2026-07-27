@@ -324,7 +324,7 @@ func TestCreateMenu_ObjectOnlyFromItsType(t *testing.T) {
 			if e.available() {
 				t.Error("objects are created from their type, not from a sibling")
 			}
-			if e.unavailableAt != "srv" {
+			if e.unavailableAt != "hub/srv" {
 				t.Errorf("gated entry points at %q, want the object's type", e.unavailableAt)
 			}
 		}
@@ -579,7 +579,7 @@ func TestVertexCreate_AlwaysLinksItSoItStaysReachable(t *testing.T) {
 	if linkName != "kid" || linkType != "rel" {
 		t.Errorf("link name/type = %q/%q, want kid/rel", linkName, linkType)
 	}
-	if msg.navTo != "child" {
+	if msg.navTo != "hub/child" {
 		t.Errorf("navTo = %q — after creating something you should be standing on it", msg.navTo)
 	}
 }
@@ -629,8 +629,8 @@ func TestObjectAndTypeCreate_LandOnWhatWasCreated(t *testing.T) {
 	m = update(m, key("t"))
 	m = typeText(m, "srv")
 	_, cmd := updateCmd(m, tea_ctrlS())
-	if got := runCmd(cmd).(mutationResultMsg).navTo; got != "srv" {
-		t.Errorf("after creating a type navTo = %q, want srv", got)
+	if got := runCmd(cmd).(mutationResultMsg).navTo; got != "hub/srv" {
+		t.Errorf("after creating a type navTo = %q, want hub/srv", got)
 	}
 
 	m = makeModel("hub/srv", typeAt("hub/srv"), nil)
@@ -639,8 +639,35 @@ func TestObjectAndTypeCreate_LandOnWhatWasCreated(t *testing.T) {
 	m = focusField(m, "id")
 	m = typeText(m, "srv-1")
 	_, cmd = updateCmd(m, tea_ctrlS())
-	if got := runCmd(cmd).(mutationResultMsg).navTo; got != "srv-1" {
-		t.Errorf("after creating an object navTo = %q, want srv-1", got)
+	if got := runCmd(cmd).(mutationResultMsg).navTo; got != "hub/srv-1" {
+		t.Errorf("after creating an object navTo = %q, want hub/srv-1", got)
+	}
+}
+
+// TestObjectCreate_EvictsTheTypeUnderItsCanonicalKey is the regression test for
+// "I created an object and there is no link from the type to it".
+//
+// The link was always created by the server. What was broken is that the type
+// vertex sat in the cache under `hub/srv` while the invalidation named `srv`,
+// so walking back to the type replayed a link list captured before the object
+// existed. The eviction has to speak the same id form as the cache.
+func TestObjectCreate_EvictsTheTypeUnderItsCanonicalKey(t *testing.T) {
+	withOps(t, graphOps{
+		objectCreate: func(string, string, easyjson.JSON) opResult { return opResult{status: opApplied} },
+	})
+
+	m := makeModel("hub/srv", typeAt("hub/srv"), nil)
+	m.cache["hub/srv"] = cachedVertex{}
+	m = update(m, key("n"))
+	m = update(m, key("o"))
+	m = focusField(m, "id")
+	m = typeText(m, "srv-1")
+	_, cmd := updateCmd(m, tea_ctrlS())
+
+	msg := runCmd(cmd).(mutationResultMsg)
+	next, _ := m.Update(msg)
+	if _, stale := next.(tuiModel).cache["hub/srv"]; stale {
+		t.Error("the type is still cached — walking back to it would hide the new object")
 	}
 }
 

@@ -150,28 +150,75 @@ func TestVertexKind_TypeWinsOverTypeOutLink(t *testing.T) {
 	}
 }
 
-func TestVertexKind_ObjectWithoutTypeLinkStaysPlain(t *testing.T) {
-	// Half-written object: in the objects topology but its __type link never
-	// landed. We cannot name its type, so HL calls would fail — report plain.
+func TestVertexKind_ObjectWithoutTypeLinkIsNamedBroken(t *testing.T) {
+	// Half-written object: in the objects topology but its instance-of link
+	// never landed. It used to report vkPlain, which made it indistinguishable
+	// from an ordinary vertex — so the high-level API kept refusing edits for
+	// no reason the user could see. Naming the state is the fix.
 	links := []displayLink{
-		{info: makeLinkInfo("hub/objects", "srv-1", "hub/srv-1", "__object"), isOut: false},
+		{info: makeLinkInfo("hub/objects", "hub/srv-1", "hub/srv-1", "__object"), isOut: false},
 	}
 	m := makeModel("hub/srv-1", links, nil)
-	if k, _ := m.vertexKind(); k != vkPlain {
-		t.Fatalf("vertexKind() = %v, want vkPlain", k)
+	if k, _ := m.vertexKind(); k != vkBrokenObject {
+		t.Fatalf("vertexKind() = %v, want vkBrokenObject", k)
 	}
 }
 
-// vertexKindBadge must keep behaving exactly as before the extraction.
-func TestVertexKindBadge_MatchesKind(t *testing.T) {
-	typeLinks := []displayLink{
+func TestVertexKind_StructuralRootsAreNotTypes(t *testing.T) {
+	for _, id := range []string{"hub/root", "hub/types", "hub/objects"} {
+		links := []displayLink{
+			{info: makeLinkInfo(id, "types", "hub/types", "__types"), isOut: true},
+		}
+		m := makeModel(id, links, nil)
+		if k, _ := m.vertexKind(); k != vkStructural {
+			t.Errorf("%s classified as %v, want vkStructural", id, k)
+		}
+	}
+}
+
+func TestVertexKind_TypesLinkOnATypeIsNotAnInstanceOf(t *testing.T) {
+	// A type's schema links are outgoing __type edges named after their
+	// target. An object's instance-of edge is an outgoing __type edge named
+	// "type". Only the name tells them apart.
+	links := []displayLink{
+		{info: makeLinkInfo("hub/srv", "rack", "hub/rack", "__type"), isOut: true},
 		{info: makeLinkInfo("hub/types", "srv", "hub/srv", "__type"), isOut: false},
 	}
-	if got := makeModel("hub/srv", typeLinks, nil).vertexKindBadge(); !strings.Contains(got, "[type]") {
-		t.Errorf("type badge = %q, want it to contain [type]", got)
+	m := makeModel("hub/srv", links, nil)
+	if k, tp := m.vertexKind(); k != vkType || tp != "" {
+		t.Fatalf("vertexKind() = (%v,%q), want (vkType,\"\")", k, tp)
 	}
-	if got := makeModel("hub/x", threeLinks(), nil).vertexKindBadge(); got != "" {
-		t.Errorf("plain badge = %q, want empty", got)
+}
+
+// TestVertexKindBadge_NamesEveryKind pins that no kind renders as nothing.
+// An absent badge used to mean three different things at once, and the create
+// menu is gated on the classification — so it has to be legible.
+func TestVertexKindBadge_NamesEveryKind(t *testing.T) {
+	cases := []struct {
+		name  string
+		id    string
+		links []displayLink
+		want  string
+	}{
+		{"type", "hub/srv", []displayLink{
+			{info: makeLinkInfo("hub/types", "srv", "hub/srv", "__type"), isOut: false},
+		}, "[type]"},
+		{"object", "hub/srv-1", []displayLink{
+			{info: makeLinkInfo("hub/srv-1", "type", "hub/srv", "__type"), isOut: true},
+		}, "[object of srv]"},
+		{"structural", "hub/root", []displayLink{
+			{info: makeLinkInfo("hub/root", "types", "hub/types", "__types"), isOut: true},
+		}, "[built-in]"},
+		{"plain", "hub/x", threeLinks(), "[vertex]"},
+		{"broken", "hub/srv-1", []displayLink{
+			{info: makeLinkInfo("hub/objects", "hub/srv-1", "hub/srv-1", "__object"), isOut: false},
+		}, "instance-of link missing"},
+	}
+	for _, c := range cases {
+		got := makeModel(c.id, c.links, nil).vertexKindBadge()
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%s badge = %q, want it to contain %q", c.name, got, c.want)
+		}
 	}
 }
 
