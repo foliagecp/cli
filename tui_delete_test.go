@@ -472,3 +472,48 @@ func TestDelete_EvictsWhereTheDeletedThingWENT(t *testing.T) {
 		}
 	}
 }
+
+// TestTrashCan_ParkedObjectIsVisibleWithoutRestartingTheCLI walks the exact
+// sequence that failed:
+//
+//	visit the trash can · create an object · delete it · walk back to the trash can
+//
+// The last step used to be a cache HIT on a link list captured before the
+// object was parked, so the object was not there — and closing and reopening
+// the CLI "fixed" it because that starts with an empty cache.
+func TestTrashCan_ParkedObjectIsVisibleWithoutRestartingTheCLI(t *testing.T) {
+	trash := hubID("trash_can")
+
+	withOps(t, graphOps{
+		objectDelete: func(string) opResult { return opResult{status: opApplied} },
+	})
+
+	// 1. The user has been to the trash can, so it is cached — with the link
+	//    list as it was BEFORE the object existed.
+	m := makeModel("hub/srv-1", objectVertexLinks(), nil)
+	m.cache[trash] = cachedVertex{fvi: &fullVertexInfo{id: trash}, links: nil}
+
+	// 2. Delete the object.
+	m = update(m, key("d"))
+	_, cmd := updateCmd(m, key("y"))
+	m = update(m, runCmd(cmd))
+
+	// 3. Walk to the trash can. A cache hit here is the bug: it would replay
+	//    the empty list. Only a real fetch can show the parked object.
+	m, navCmd := m.navigateTo(trash)
+	if navCmd == nil {
+		t.Fatal("navigating to the trash can should load it")
+	}
+	switch navCmd().(type) {
+	case vertexLoadedMsg:
+		t.Fatal("served the trash can from cache — that list predates the deletion, " +
+			"which is why the object only appeared after restarting the CLI")
+	case vertexInfoMsg:
+		// A real fetch. Correct.
+	default:
+		t.Fatalf("unexpected load message %T", navCmd())
+	}
+	if !m.loading {
+		t.Error("a real fetch should show as loading")
+	}
+}
