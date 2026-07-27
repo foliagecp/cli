@@ -203,7 +203,7 @@ var helpSections = []helpSection{
 		{"Enter", "follow the selected link · expand or collapse a type group"},
 		{"Tab", "collapse or expand the type group"},
 		{"b  Backspace", "back to the previous vertex"},
-		{"R", "jump to root and reset history, search and anchor"},
+		{"R", "jump to root and reset history, search and a pending link"},
 		{"g G", "scroll the body up / down"},
 	}},
 	{"View", []helpEntry{
@@ -215,12 +215,12 @@ var helpSections = []helpSection{
 		{"r", "refresh · ctrl+r also clears the cache"},
 	}},
 	{"Create", []helpEntry{
-		{"n", "new… — menu of what can be created here"},
-		{"a", "anchor the current vertex as a link source (again to clear)"},
-		{"L", "create a link from the anchor to the current vertex"},
+		{"n", "new… — what can be created from where you are standing"},
+		{"L", "start a link here · press again at the target to commit"},
+		{"Esc", "cancel a pending link"},
 	}},
 	{"Modify", []helpEntry{
-		{"i", "edit a body — the selected link's, or the vertex's"},
+		{"i", "edit the current vertex's body"},
 		{"t", "edit the selected link's tags"},
 		{"x", "toggle the low-level API (shown as [LL] in the header)"},
 		{"y", "yank the displayed body, to reuse as a template"},

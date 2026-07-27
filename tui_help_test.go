@@ -17,15 +17,6 @@ import (
 // Rather than re-listing the keymap (which would just drift in a second place),
 // this walks the help table and checks every navigation binding appears in it.
 func TestHelp_ListsEveryNavKey(t *testing.T) {
-	navKeys := []string{
-		"j", "k", "h", "l", "enter", "tab", "b", "R", "g", "G",
-		"v", "c", "/", "f", "e", "r",
-		"n", "L",
-		"i", "t", "x", "y",
-		"d", "D",
-		"?",
-	}
-
 	var help strings.Builder
 	for _, sec := range helpSections {
 		for _, e := range sec.entries {
@@ -50,6 +41,57 @@ func TestHelp_ListsEveryNavKey(t *testing.T) {
 		t.Errorf("keys bound in the TUI but absent from the help screen: %v\n"+
 			"a key nobody can discover may as well not exist — add it to helpSections", missing)
 	}
+}
+
+// navKeys is every key updateNav acts on. It is the counterpart to helpSections
+// and the two are checked against each other in both directions.
+var navKeys = []string{
+	"j", "k", "h", "l", "enter", "tab", "b", "R", "g", "G",
+	"v", "c", "/", "f", "e", "r",
+	"n", "L", "esc",
+	"i", "t", "x", "y",
+	"d", "D",
+	"?",
+}
+
+// TestHelp_ListsNothingThatIsNotBound is the other half of the guard, and the
+// one that was missing: the help kept advertising `a` for a whole release after
+// the anchor it named had been replaced by L's two-step commit. Documentation
+// that lies is worse than none — the user presses the key, nothing happens, and
+// now they distrust the rest of the screen too.
+//
+// Only single-letter tokens are checked. Aliases the help spells out for
+// readability (Backspace, the arrows) have no entry in navKeys and are not
+// claims about a binding of their own.
+func TestHelp_ListsNothingThatIsNotBound(t *testing.T) {
+	bound := map[string]bool{}
+	for _, k := range navKeys {
+		bound[strings.ToLower(k)] = true
+	}
+
+	for _, sec := range helpSections {
+		// The last two sections document chords inside a form or the body
+		// editor, which updateNav never sees.
+		if sec.title == "Editing a body" || sec.title == "In a form" {
+			continue
+		}
+		for _, e := range sec.entries {
+			for _, tok := range strings.Fields(e.keys) {
+				if len([]rune(tok)) != 1 || !isASCIILetter(tok) {
+					continue
+				}
+				if !bound[strings.ToLower(tok)] {
+					t.Errorf("help lists %q under %q but nothing is bound to it — "+
+						"remove the entry or bind the key", tok, sec.title)
+				}
+			}
+		}
+	}
+}
+
+func isASCIILetter(s string) bool {
+	c := s[0]
+	return len(s) == 1 && (c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z')
 }
 
 // mentionsKey looks for a key as a standalone token, so "l" does not match the
