@@ -453,27 +453,14 @@ func (m tuiModel) renderQueryResults(w, h int) string {
 
 // ── Body panel badge ──────────────────────────────────────────────────────────
 
+// vertexKindBadge renders the classification computed by vertexKind
+// (tui_model.go). Behaviour is unchanged from when the classification lived
+// here inline.
 func (m tuiModel) vertexKindBadge() string {
-	typesID := NatsHubDomain + "/types"
-	objectsID := NatsHubDomain + "/objects"
-	isObject, isType := false, false
-	typeName := ""
-	for _, dl := range m.links {
-		target := dl.target()
-		if target == typesID {
-			isType = true
-		}
-		if target == objectsID {
-			isObject = true
-		}
-		if dl.isOut && dl.info.tp == "__type" {
-			typeName = stripDomain(target)
-		}
-	}
-	if isType {
+	switch k, typeName := m.vertexKind(); k {
+	case vkType:
 		return " " + styleMetaKey.Render("[type]")
-	}
-	if isObject && typeName != "" {
+	case vkObject:
 		return " " + styleMetaKey.Render("["+typeName+"]")
 	}
 	return ""

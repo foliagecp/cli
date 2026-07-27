@@ -346,6 +346,54 @@ func (m tuiModel) refreshBody() tuiModel {
 	return m
 }
 
+// ── Vertex classification ─────────────────────────────────────────────────────
+
+type vertexKind int
+
+const (
+	vkPlain  vertexKind = iota // a bare graph vertex — only the low-level API applies
+	vkType                     // a CMDB type: linked from the built-in `types` root
+	vkObject                   // a CMDB object: linked from `objects`, with a __type out-link
+)
+
+// vertexKind classifies the current vertex from its links, and for an object
+// also returns its type name.
+//
+// The precedence matters and is not arbitrary: a CMDB types-link is stored as a
+// `__type`-typed edge — the SAME link type an object uses for its instance-of
+// edge — so a `__type` out-link alone cannot tell a type vertex from an object.
+// Membership in the `types` topology is the discriminator and must be checked
+// first. This is the ordering vertexKindBadge has always relied on; extracting
+// it here keeps the CRUD flows from re-deriving it (and getting it wrong).
+func (m tuiModel) vertexKind() (vertexKind, string) {
+	typesID := NatsHubDomain + "/types"
+	objectsID := NatsHubDomain + "/objects"
+	isObject, isType := false, false
+	typeName := ""
+	for _, dl := range m.links {
+		target := dl.target()
+		if target == typesID {
+			isType = true
+		}
+		if target == objectsID {
+			isObject = true
+		}
+		if dl.isOut && dl.info.tp == "__type" {
+			typeName = stripDomain(target)
+		}
+	}
+	if isType {
+		return vkType, ""
+	}
+	// An object whose __type link is missing (a half-written vertex) stays
+	// vkPlain: we genuinely cannot name its type, and claiming otherwise would
+	// send HL calls that the server will reject.
+	if isObject && typeName != "" {
+		return vkObject, typeName
+	}
+	return vkPlain, ""
+}
+
 // cursorLink returns the displayLink at the active cursor (only for flatLink items).
 func (m tuiModel) cursorLink() (displayLink, bool) {
 	flat := m.activeFlat()
