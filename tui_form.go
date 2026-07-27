@@ -95,6 +95,7 @@ const (
 	formTypeCreate
 	formObjectCreate
 	formLinkTags
+	formSubTypeSet
 )
 
 type formState struct {

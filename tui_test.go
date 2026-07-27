@@ -1469,18 +1469,17 @@ func TestStatus_DefaultHints(t *testing.T) {
 	}
 }
 
-func TestStatus_AnchorReplacesTheAnchorHintWithLink(t *testing.T) {
+func TestStatus_LinkHintReflectsPendingState(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", nil, &fvi)
 
-	if !strings.Contains(m.renderStatus(), "anchor") {
-		t.Error("with no anchor set the bar should offer to set one")
+	if !strings.Contains(m.renderStatus(), "link") {
+		t.Error("the bar should advertise starting a link")
 	}
 
-	m.anchor = &anchorState{id: "hub/src"}
-	out := m.renderStatus()
-	if !strings.Contains(out, "L") || !strings.Contains(out, "⚓") {
-		t.Errorf("with an anchor set the bar should offer to link from it, got:\n%s", out)
+	m.linking = &pendingLink{fromID: "hub/src"}
+	if !strings.Contains(m.renderStatus(), "commit") {
+		t.Errorf("with a link pending the bar should offer to commit it, got:\n%s", m.renderStatus())
 	}
 }
 

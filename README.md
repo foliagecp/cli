@@ -57,7 +57,7 @@ the most-used bindings.
 | `f` | Live filter links by name · `Esc` clears |
 | `e` | Export graph to file (graphml / dot / json2xml), choose depth |
 | `r` / `Ctrl+R` | Refresh current vertex · also clear the entire cache |
-| `R` | Jump to `root` and reset all state, including the anchor |
+| `R` | Jump to `root` and reset all state, including a pending link |
 | `g` / `G` | Scroll body up / down |
 | `?` | Show the full keymap |
 | `q` / `Ctrl+C` | Quit |
@@ -66,19 +66,33 @@ the most-used bindings.
 
 | Key | Action |
 |---|---|
-| `n` | New… — a menu of what can be created where you are standing |
-| `a` | Anchor the current vertex as a link source (press again to clear) |
-| `L` | Create a link from the anchor to the current vertex |
+| `n` | New… — what can be created from where you are standing |
+| `L` | Start a link here · press again at the target to commit |
+| `Esc` | Cancel a pending link |
 
-Linking is "walk, then link": press `a` on the source, navigate to the target
-however you like, then press `L`. The anchor stays visible in the breadcrumb
-row and survives navigation — it is data, not a mode. Inside the form, `←`/`→`
-swaps the direction, so one anchor covers both.
+**You create a thing where that thing lives.** Types are created from
+`hub/types`, objects from their own type, links from one of their endpoints,
+and a raw vertex is always attached to the vertex you create it from. This is
+not ceremony: the TUI finds things by walking the graph, so anything created
+outside its home would be unreachable by the very tool that made it. After a
+successful create you are moved onto the new entity.
+
+Where an action does not belong, the menu still lists it, says where it does
+live, and **pressing it takes you there** — so the rule is learned by using it
+rather than by being refused.
+
+Linking is a two-step commit, because typing a target id defeats the point of
+having a browser:
+
+1. Stand on the source, press `L` — a banner appears: `◆ LINK PENDING  srv-1 ──▶ …`
+2. Navigate anywhere. Every key keeps working; the banner stays.
+3. At the target press `L` again to commit, or `Esc` to cancel.
 
 Which API the link goes through is derived from the endpoints and shown in the
 form title: type→type creates a **types-link** (a schema declaration), object→object
 an **objects-link** (whose link type comes from that schema and is therefore not
-editable), and anything else a **raw link**.
+editable), and anything else a **raw link**. Inside the form `←`/`→` swaps the
+direction.
 
 **Modify and delete**
 

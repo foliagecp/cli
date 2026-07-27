@@ -78,7 +78,7 @@ func submitFormCmd(f formState) tea.Cmd {
 		return submitLinkCreateCmd(f)
 	case formLinkTags:
 		return submitLinkTagsCmd(f)
-	case formVertexCreate, formTypeCreate, formObjectCreate:
+	case formVertexCreate, formTypeCreate, formObjectCreate, formSubTypeSet:
 		return submitCreateCmd(f)
 	}
 	return nil
@@ -127,12 +127,21 @@ func submitBodyEditCmd(f formState) tea.Cmd {
 	}
 }
 
-// ── Anchor ────────────────────────────────────────────────────────────────────
+// ── Pending link ──────────────────────────────────────────────────────────────
 
-// anchorState marks a vertex as the source for the next link. It is data, not
-// a mode: every navigation key keeps working while it is set.
-type anchorState struct {
-	id       string
+// pendingLink is a link-in-progress: the source has been chosen and the user is
+// now navigating to the target.
+//
+// It is deliberately a two-step commit rather than a form that asks for both
+// endpoints. Typing a target id defeats the point of having a graph browser —
+// the whole reason to be in the TUI is that you find things by walking to them.
+// So: Start here, walk anywhere, Commit there.
+//
+// It is DATA, not a mode: every navigation key keeps working while it is set,
+// which is what makes "walk anywhere" true. What makes it discoverable is the
+// banner it puts in the breadcrumb row for as long as it is pending.
+type pendingLink struct {
+	fromID   string
 	kind     vertexKind
 	typeName string
 }
@@ -244,10 +253,10 @@ func submitDeleteVertexCmd(f formState) tea.Cmd {
 		}
 
 		msg := mutationResultMsg{
-			op:            op,
-			target:        id,
-			res:           res,
-			clearAnchorIf: id,
+			op:          op,
+			target:      id,
+			res:         res,
+			clearLinkIf: id,
 		}
 		if entity == entType {
 			// A type delete cascades into an unbounded number of object
@@ -320,26 +329,26 @@ func (t linkTier) title() string {
 // vertex. The chosen API tier is in the title so the user can always see which
 // one is about to run.
 func openLinkCreateForm(m tuiModel) (formState, string) {
-	if m.anchor == nil {
+	if m.linking == nil {
 		return formState{}, "press a to anchor a source vertex first"
 	}
-	if m.anchor.id == m.currentID {
+	if m.linking.fromID == m.currentID {
 		return formState{}, "the anchor and the target are the same vertex"
 	}
 
 	toKind, toType := m.vertexKind()
-	tier := linkTierFor(m.anchor.kind, toKind, m.llMode)
+	tier := linkTierFor(m.linking.kind, toKind, m.llMode)
 
 	f := formState{
 		kind:   formLinkCreate,
 		title:  tier.title(),
 		chrome: chromeCenter,
 		ctx: formCtx{
-			fromID:   m.anchor.id,
+			fromID:   m.linking.fromID,
 			toID:     m.currentID,
-			fromKind: m.anchor.kind,
+			fromKind: m.linking.kind,
 			toKind:   toKind,
-			fromType: m.anchor.typeName,
+			fromType: m.linking.typeName,
 			toType:   toType,
 			entity:   entLink,
 			llMode:   m.llMode,
@@ -377,7 +386,7 @@ func openLinkCreateForm(m tuiModel) (formState, string) {
 			value: stripDomain(m.currentID),
 		}, formField{
 			key: "type", label: "type", kind: fieldID, required: true,
-			value: lastLinkTypeOn(m, m.anchor.id),
+			value: lastLinkTypeOn(m, m.linking.fromID),
 		}, formField{
 			key: "force", label: "force", kind: fieldBool,
 			hint: "overwrite an existing link, bypassing the uniqueness checks",
@@ -449,46 +458,90 @@ func submitLinkCreateCmd(f formState) tea.Cmd {
 
 // ── Create menu ───────────────────────────────────────────────────────────────
 
+// The governing rule for creation: YOU CREATE A THING WHERE THAT THING LIVES.
+//
+// Types are created from the `types` root, objects from their own type, links
+// from one of their endpoints. This is not a stylistic choice — it is what
+// makes the TUI's promise hold. The TUI finds things by walking the graph, so
+// anything created outside its home would be unreachable by the very tool that
+// made it. Gating creation on location means a new entity is always attached
+// to something you can already see.
+//
+// Where an action is not available, the menu still SHOWS it, says where it
+// does live, and pressing it takes you there. A menu that silently omits
+// options teaches nothing; one that explains teaches the data model.
+
 type menuEntry struct {
-	key      string
-	label    string
-	disabled string // non-empty ⇒ shown dimmed with this reason
-	kind     formKind
+	key   string
+	label string
+
+	// unavailableAt, when set, is where this action does live. The entry is
+	// dimmed and choosing it navigates there instead of acting.
+	unavailableAt string
+	why           string
+
+	kind formKind
 }
 
+func (e menuEntry) available() bool { return e.unavailableAt == "" && e.why == "" }
+
 // createMenuFor lists what can be created from where the user is standing.
-// Entries that need an anchor are shown dimmed with the reason rather than
-// hidden — hiding them teaches the user nothing.
 func createMenuFor(m tuiModel) []menuEntry {
 	kind, typeName := m.vertexKind()
-	anchored := m.anchor != nil
+	bare := stripDomain(m.currentID)
+	typesRoot := NatsHubDomain + "/types"
 
-	needAnchor := ""
-	if !anchored {
-		needAnchor = "press a to anchor a source vertex first"
+	linkLabel := "link — start here, walk to the target, press L again"
+	if m.linking != nil {
+		linkLabel = "link — commit: " + stripDomain(m.linking.fromID) + " ──▶ " + bare
 	}
 
 	var out []menuEntry
-	switch {
-	case kind == vkType && !m.llMode:
-		out = append(out,
-			menuEntry{"o", "new object of " + stripDomain(m.currentID), "", formObjectCreate},
-			menuEntry{"l", "new link from ⚓ to here", needAnchor, formLinkCreate},
-			menuEntry{"t", "new type", "", formTypeCreate},
-		)
-	case kind == vkObject && !m.llMode:
-		out = append(out,
-			menuEntry{"l", "new link from ⚓ to here", needAnchor, formLinkCreate},
-			menuEntry{"o", "new object of " + typeName, "", formObjectCreate},
-			menuEntry{"t", "new type", "", formTypeCreate},
-		)
-	default:
-		out = append(out,
-			menuEntry{"v", "new raw vertex", "", formVertexCreate},
-			menuEntry{"l", "new raw link from ⚓ to here", needAnchor, formLinkCreate},
-			menuEntry{"t", "new type", "", formTypeCreate},
-		)
+
+	// Types live under the types root.
+	if bare == "types" {
+		out = append(out, menuEntry{key: "t", label: "type", kind: formTypeCreate})
+	} else {
+		out = append(out, menuEntry{
+			key: "t", label: "type",
+			unavailableAt: typesRoot,
+			why:           "types are created from " + typesRoot,
+			kind:          formTypeCreate,
+		})
 	}
+
+	// Objects live under their type.
+	switch {
+	case kind == vkType:
+		out = append(out, menuEntry{key: "o", label: "object of " + bare, kind: formObjectCreate})
+		out = append(out, menuEntry{key: "s", label: "sub-type of " + bare, kind: formSubTypeSet})
+	case kind == vkObject && typeName != "":
+		out = append(out, menuEntry{
+			key: "o", label: "object of " + typeName,
+			unavailableAt: typeName,
+			why:           "objects are created from their type",
+			kind:          formObjectCreate,
+		})
+	default:
+		out = append(out, menuEntry{
+			key: "o", label: "object",
+			unavailableAt: typesRoot,
+			why:           "objects are created from their type — pick one under " + typesRoot,
+			kind:          formObjectCreate,
+		})
+	}
+
+	// Links live on their endpoints, so they can always be started.
+	out = append(out, menuEntry{key: "l", label: linkLabel, kind: formLinkCreate})
+
+	// A raw vertex has no home of its own, which is exactly why it must be
+	// attached to the vertex it is created from — otherwise nothing in the
+	// graph points at it and the browser can never reach it again.
+	out = append(out, menuEntry{
+		key: "v", label: "raw vertex — linked from " + bare + " (low level)",
+		kind: formVertexCreate,
+	})
+
 	return out
 }
 
@@ -497,32 +550,40 @@ func openCreateMenu(m tuiModel) formState {
 	fields := make([]formField, len(entries))
 	for i, e := range entries {
 		label := e.label
-		if e.disabled != "" {
-			label += "  — " + e.disabled
+		if !e.available() {
+			label += "   ⟶ " + e.why
 		}
-		fields[i] = formField{
-			key: e.key, label: e.key, kind: fieldStatic, static: label,
-		}
+		fields[i] = formField{key: e.key, label: e.key, kind: fieldStatic, static: label}
 	}
 	return formState{
 		kind:   formCreateMenu,
-		title:  "New…",
+		title:  "New… (from " + stripDomain(m.currentID) + ")",
 		chrome: chromeCenter,
 		fields: fields,
 	}
 }
 
-// ── Vertex / type / object creation ───────────────────────────────────────────
+// ── Vertex / type / object / sub-type creation ────────────────────────────────
 
+// openVertexCreateForm builds the raw-vertex form.
+//
+// The link back to the current vertex is NOT optional and has no toggle: a raw
+// vertex nothing points at is invisible to a graph browser the moment you
+// navigate away. Creating one would be handing the user a lost object.
 func openVertexCreateForm(m tuiModel) formState {
+	dom := domainOf(m.currentID)
 	f := formState{
 		kind:   formVertexCreate,
-		title:  "New raw vertex",
+		title:  "New raw vertex, linked from " + stripDomain(m.currentID),
 		chrome: chromeCenter,
-		ctx:    formCtx{entity: entVertex, domain: domainOf(m.currentID)},
+		ctx:    formCtx{fromID: m.currentID, entity: entVertex, domain: dom},
 		fields: []formField{
 			{key: "id", label: "id", kind: fieldID, required: true,
-				hint: "will create " + domainOf(m.currentID) + "/<id>"},
+				hint: "will create " + dom + "/<id>"},
+			{key: "linkname", label: "link name", kind: fieldID, required: true,
+				hint: "the link " + stripDomain(m.currentID) + " ──▶ <id> that keeps it reachable"},
+			{key: "linktype", label: "link type", kind: fieldID, required: true,
+				value: lastLinkTypeOn(m, m.currentID)},
 		},
 	}
 	return f.validate()
@@ -536,36 +597,43 @@ func openTypeCreateForm(m tuiModel) formState {
 		ctx:    formCtx{entity: entType},
 		fields: []formField{
 			{key: "name", label: "name", kind: fieldID, required: true,
-				// Type operations are redirected to the hub regardless of
-				// where the user is browsing.
-				hint: "will create " + NatsHubDomain + "/<name>"},
+				// Type operations are redirected to the hub wherever the user
+				// is browsing, so the preview must not promise a local domain.
+				hint: "will create " + NatsHubDomain + "/<name>, linked under " +
+					NatsHubDomain + "/types"},
 		},
 	}
 	return f.validate()
 }
 
+// openObjectCreateForm is only reachable while standing on a type, so the type
+// is settled and shown read-only rather than offered as a field to mistype.
 func openObjectCreateForm(m tuiModel) formState {
-	kind, typeName := m.vertexKind()
-
-	typeField := formField{key: "type", label: "type", kind: fieldID, required: true}
-	if kind == vkType {
-		// Standing on the type is the whole point of context sensitivity: the
-		// type is settled, so it is shown but not editable.
-		typeField = formField{key: "type", label: "type", kind: fieldStatic,
-			static: stripDomain(m.currentID)}
-	} else if typeName != "" {
-		typeField.value = typeName
-	}
-
+	dom := domainOf(m.currentID)
 	f := formState{
 		kind:   formObjectCreate,
-		title:  "New object",
+		title:  "New object of " + stripDomain(m.currentID),
 		chrome: chromeCenter,
-		ctx:    formCtx{entity: entObject, domain: domainOf(m.currentID)},
+		ctx:    formCtx{fromID: m.currentID, entity: entObject, domain: dom},
 		fields: []formField{
 			{key: "id", label: "id", kind: fieldID, required: true,
-				hint: "will create " + domainOf(m.currentID) + "/<id>"},
-			typeField,
+				hint: "will create " + dom + "/<id>"},
+			{key: "type", label: "type", kind: fieldStatic, static: stripDomain(m.currentID)},
+		},
+	}
+	return f.validate()
+}
+
+// openSubTypeForm declares another type a sub-type of the one in view.
+func openSubTypeForm(m tuiModel) formState {
+	f := formState{
+		kind:   formSubTypeSet,
+		title:  "Declare a sub-type of " + stripDomain(m.currentID),
+		chrome: chromeCenter,
+		ctx:    formCtx{fromID: m.currentID, entity: entType},
+		fields: []formField{
+			{key: "child", label: "child type", kind: fieldID, required: true,
+				hint: "an existing type that inherits from " + stripDomain(m.currentID)},
 		},
 	}
 	return f.validate()
@@ -582,31 +650,70 @@ func submitCreateCmd(f formState) tea.Cmd {
 	switch f.kind {
 	case formVertexCreate:
 		id := f.value("id")
+		from := f.ctx.fromID
+		linkName, linkType := f.value("linkname"), f.value("linktype")
 		return func() tea.Msg {
+			res := ops.vertexCreate(id, easyjson.NewJSONObject())
+			if res.status == opFailed {
+				return mutationResultMsg{op: "vertex.create", target: id, res: res}
+			}
+			// The vertex exists but is unreachable until this lands, so a
+			// failure here is reported as the failure of the whole operation
+			// rather than as a successful create.
+			linkRes := ops.linkCreate(from, id, linkName, linkType, nil, easyjson.NewJSONObject(), false)
+			if linkRes.status == opFailed {
+				linkRes.details = "vertex created but linking it failed: " + linkRes.details
+				return mutationResultMsg{
+					op: "vertex.create", target: id, res: linkRes,
+					invalidate: []string{id, from}, refresh: true,
+				}
+			}
 			return mutationResultMsg{
-				op: "vertex.create", target: id,
-				res:        ops.vertexCreate(id, easyjson.NewJSONObject()),
-				invalidate: []string{id},
+				op: "vertex.create", target: id, res: res,
+				invalidate: []string{id, from},
+				navTo:      id, // land on what was just made
 			}
 		}
 	case formTypeCreate:
 		name := f.value("name")
 		return func() tea.Msg {
-			return mutationResultMsg{
-				op: "type.create", target: name,
-				res:        ops.typeCreate(name, easyjson.NewJSONObject()),
+			res := ops.typeCreate(name, easyjson.NewJSONObject())
+			msg := mutationResultMsg{
+				op: "type.create", target: name, res: res,
 				invalidate: []string{name, NatsHubDomain + "/types"},
-				refresh:    true,
 			}
+			if res.status != opFailed {
+				msg.navTo = name
+			} else {
+				msg.refresh = true
+			}
+			return msg
 		}
 	case formObjectCreate:
 		id, tp := f.value("id"), f.value("type")
 		return func() tea.Msg {
-			return mutationResultMsg{
-				op: "object.create", target: id,
-				res:        ops.objectCreate(id, tp, easyjson.NewJSONObject()),
+			res := ops.objectCreate(id, tp, easyjson.NewJSONObject())
+			msg := mutationResultMsg{
+				op: "object.create", target: id, res: res,
 				invalidate: []string{id, tp, NatsHubDomain + "/objects"},
-				refresh:    true,
+			}
+			if res.status != opFailed {
+				msg.navTo = id
+			} else {
+				msg.refresh = true
+			}
+			return msg
+		}
+	case formSubTypeSet:
+		base, child := f.ctx.fromID, f.value("child")
+		return func() tea.Msg {
+			return mutationResultMsg{
+				op: "type.subtype.add", target: stripDomain(base) + " → " + child,
+				res: ops.subTypeSet(base, child),
+				// The inheritance recompute rewrites cached parent lists on
+				// arbitrary descendants, so nothing cached can be trusted.
+				clearAll: true,
+				refresh:  true,
 			}
 		}
 	}

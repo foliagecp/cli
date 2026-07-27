@@ -272,14 +272,14 @@ func TestDelete_ClearsAnAnchorOnTheDeletedVertex(t *testing.T) {
 	})
 
 	m := makeModel("hub/x", nil, nil)
-	m.anchor = &anchorState{id: "hub/x"}
+	m.linking = &pendingLink{fromID: "hub/x"}
 
 	m = update(m, key("D"))
 	m, cmd := updateCmd(m, key("y"))
 	next, _ := m.Update(runCmd(cmd))
 	m = next.(tuiModel)
 
-	if m.anchor != nil {
+	if m.linking != nil {
 		t.Error("an anchor on the deleted vertex should be cleared")
 	}
 }

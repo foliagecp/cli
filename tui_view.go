@@ -629,23 +629,29 @@ func (m tuiModel) renderHeader() string {
 
 func (m tuiModel) renderBreadcrumbs() string {
 	bc := m.breadcrumbs()
-	if m.anchor == nil {
+	if m.linking == nil {
 		if bc == "" {
 			return ""
 		}
 		return lipgloss.NewStyle().Width(m.width).Render(bc)
 	}
-	// The anchor is the actionable item on this row, so it is rendered first
-	// and the history crumbs give way when the row overflows.
-	mark := styleWarn.Render("⚓ " + stripDomain(m.anchor.id))
-	rest := ""
-	if bc != "" {
-		avail := m.width - lipgloss.Width(mark) - 3
-		if avail > 8 {
-			rest = "   " + truncateCells(bc, avail)
-		}
+
+	// A pending link is the single most important thing on screen while it
+	// lasts: it changes what the next keypress means. It gets the whole row,
+	// states both endpoints, and names its two exits — the history crumbs are
+	// decoration by comparison and give way first.
+	from := stripDomain(m.linking.fromID)
+	to := stripDomain(m.currentID)
+	target := styleDim.Render("(walk to the target)")
+	if m.currentID != m.linking.fromID {
+		target = styleMetaVal.Render(to)
 	}
-	return lipgloss.NewStyle().Width(m.width).Render(mark + rest)
+
+	banner := styleWarn.Render(" ◆ LINK PENDING ") + "  " +
+		styleMetaVal.Render(from) + styleOut.Render("  ──▶  ") + target +
+		styleHintSep.Render("   ") + hint("L", "commit") + styleHintSep.Render("  ") + hint("Esc", "cancel")
+
+	return lipgloss.NewStyle().Width(m.width).Render(truncateCells(banner, m.width))
 }
 
 func hint(key, desc string) string {
@@ -723,10 +729,10 @@ func (m tuiModel) renderStatus() string {
 			hint("i", "edit"),
 			hint("d", "del"),
 		}
-		if m.anchor != nil {
-			parts = append(parts, hint("L", "link from ⚓"))
+		if m.linking != nil {
+			parts = append(parts, hint("L", "commit link"))
 		} else {
-			parts = append(parts, hint("a", "anchor"))
+			parts = append(parts, hint("L", "link"))
 		}
 		parts = append(parts, hint("?", "help"))
 		s = strings.Join(parts, sep)

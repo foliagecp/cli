@@ -20,7 +20,7 @@ func TestHelp_ListsEveryNavKey(t *testing.T) {
 	navKeys := []string{
 		"j", "k", "h", "l", "enter", "tab", "b", "R", "g", "G",
 		"v", "c", "/", "f", "e", "r",
-		"n", "a", "L",
+		"n", "L",
 		"i", "t", "x", "y",
 		"d", "D",
 		"?",

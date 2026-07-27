@@ -358,23 +358,19 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queryResult = ""
 			return m, textarea.Blink
 
-		case "a":
-			// Anchor is data, not a mode: every navigation key keeps working
-			// while it is set.
-			if m.anchor != nil && m.anchor.id == m.currentID {
-				m.anchor = nil
-				m.queryResult = styleDim.Render("⚓ anchor cleared")
-				return m, nil
-			}
-			kind, tp := m.vertexKind()
-			m.anchor = &anchorState{id: m.currentID, kind: kind, typeName: tp}
-			m.queryResult = styleDim.Render("⚓ anchored " + stripDomain(m.currentID) +
-				" — navigate to the target and press L")
-			return m, nil
-
 		case "L":
 			if m.loading {
 				m.queryResult = styleDim.Render("still loading…")
+				return m, nil
+			}
+			// Start here, walk anywhere, commit there. Two presses of the same
+			// key, with a banner in between saying what is pending — rather
+			// than a form asking the user to type a target id, which is the
+			// one thing a graph browser exists to avoid.
+			if m.linking == nil {
+				kind, tp := m.vertexKind()
+				m.linking = &pendingLink{fromID: m.currentID, kind: kind, typeName: tp}
+				m.queryResult = ""
 				return m, nil
 			}
 			f, refusal := openLinkCreateForm(m)
@@ -487,6 +483,11 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, textinput.Blink
 
 		case "esc":
+			if m.linking != nil {
+				m.linking = nil
+				m.queryResult = styleDim.Render("link cancelled")
+				return m, nil
+			}
 			if m.searchQuery != "" {
 				m.searchQuery = ""
 				m.searchInput.SetValue("")
@@ -516,7 +517,7 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, fetchVertexCmd(m.currentID, m.loadGen)
 
 		case "R":
-			m.anchor = nil
+			m.linking = nil
 			m.queryResult = ""
 			m.queryResults = nil
 			m.errMsg = ""
@@ -701,6 +702,21 @@ func (m tuiModel) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// navigateTo walks to a vertex, pushing the current one onto the history.
+func (m tuiModel) navigateTo(id string) (tea.Model, tea.Cmd) {
+	if id == "" || id == m.currentID {
+		return m, nil
+	}
+	m.history = append(m.history, m.currentID)
+	m.loadGen++
+	if cv, ok := m.cache[id]; ok {
+		return m, cacheHitCmd(id, m.loadGen, cv)
+	}
+	m.loading = true
+	m.linksTotal = 0
+	return m, fetchVertexCmd(id, m.loadGen)
+}
+
 // updateCreateMenu turns a letter into the form it names.
 func (m tuiModel) updateCreateMenu(kMsg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := kMsg.String()
@@ -713,10 +729,13 @@ func (m tuiModel) updateCreateMenu(kMsg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if e.key != k {
 			continue
 		}
-		if e.disabled != "" {
-			// Kept visible but inert: the user learns what is missing.
-			m.form.err = e.disabled
-			return m, nil
+		if !e.available() {
+			// Rather than refusing, take the user where the action lives. The
+			// menu already said where that is; going there makes the rule
+			// concrete instead of theoretical.
+			m.form = nil
+			m.queryResult = styleDim.Render(e.why)
+			return m.navigateTo(e.unavailableAt)
 		}
 		var f formState
 		switch e.kind {
@@ -726,6 +745,8 @@ func (m tuiModel) updateCreateMenu(kMsg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			f = openTypeCreateForm(m)
 		case formObjectCreate:
 			f = openObjectCreateForm(m)
+		case formSubTypeSet:
+			f = openSubTypeForm(m)
 		case formLinkCreate:
 			lf, refusal := openLinkCreateForm(m)
 			if refusal != "" {
@@ -764,8 +785,8 @@ func (m tuiModel) applyMutationResult(msg mutationResultMsg) (tea.Model, tea.Cmd
 	}
 	m.errMsg = ""
 
-	if msg.clearAnchorIf != "" && m.anchor != nil && m.anchor.id == msg.clearAnchorIf {
-		m.anchor = nil
+	if msg.clearLinkIf != "" && m.linking != nil && m.linking.fromID == msg.clearLinkIf {
+		m.linking = nil
 	}
 
 	if msg.clearAll {

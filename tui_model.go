@@ -302,8 +302,8 @@ type tuiModel struct {
 	// still intact.
 	pendingNavAfterDelete string
 
-	// anchor marks a vertex as the source for the next link; see tui_flows.go.
-	anchor *anchorState
+	// linking is a link-in-progress: source chosen, target being walked to.
+	linking *pendingLink
 
 	// bodyRegister holds a yanked body, offered as a template when creating
 	// or editing another entity. Navigating to a sibling, pressing y, and
@@ -884,10 +884,10 @@ func (m tuiModel) centerContentW() int {
 	return w
 }
 
-// breadcrumbH also reserves the row for the anchor marker, which lives there
-// even with no history.
+// breadcrumbH also reserves the row for the pending-link banner, which lives
+// there even with no history.
 func (m tuiModel) breadcrumbH() int {
-	if len(m.history) > 0 || m.anchor != nil {
+	if len(m.history) > 0 || m.linking != nil {
 		return 1
 	}
 	return 0
