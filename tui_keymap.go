@@ -65,7 +65,7 @@ var keymap = []binding{
 	{keys: "?", desc: "this screen", mode: modeBrowse, group: "View"},
 
 	{keys: "n", desc: "new… — what can be created from where you are standing", mode: modeBrowse, group: "Create", hint: "n:new", prio: 3},
-	{keys: "L", desc: "start a link here · press again at the target to commit", mode: modeBrowse, group: "Create", hint: "L:link", prio: 3},
+	{keys: "L", desc: "the link key: edit the selected link · or start one here and press L again at the target", mode: modeBrowse, group: "Create", hint: "L:link", prio: 3},
 	{keys: "esc", desc: "cancel a pending link", mode: modeBrowse, group: "Create"},
 
 	{keys: "i", desc: "edit the subject — the vertex on the centre column, the selected link in a side one", mode: modeBrowse, group: "Modify", hint: "i:edit", prio: 2},

@@ -472,6 +472,9 @@ func submitLinkCreateCmd(f formState) tea.Cmd {
 			target:  stripDomain(from) + " → " + stripDomain(to),
 			res:     res,
 			refresh: true,
+			// The link exists; the banner has been promising this commit
+			// across every keystroke since it appeared, so it comes down.
+			clearPending: true,
 		}
 	}
 }

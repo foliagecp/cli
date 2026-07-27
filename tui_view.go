@@ -983,8 +983,8 @@ func (m tuiModel) browseHintLine(lead, sep string, reserved int) string {
 	}
 
 	for _, h := range browseHintsFor(m.linkPanelFocused()) {
-		if h == "L:link" && m.linking != nil {
-			h = "L:commit link"
+		if h == "L:link" {
+			h = "L:" + m.linkKeyAction()
 		}
 		rendered := hintPair(h)
 		w := sepW + lipgloss.Width(rendered)
@@ -1012,4 +1012,17 @@ func clipLines(s string, n int) string {
 		lines = append(lines, "")
 	}
 	return strings.Join(lines, "\n")
+}
+
+// linkKeyAction names what L will do right now. It is three different things,
+// and a hint that said only "link" left the user to guess which.
+func (m tuiModel) linkKeyAction() string {
+	switch {
+	case m.linking != nil:
+		return "commit link"
+	case m.subject().kind == subjLink:
+		return "edit link"
+	default:
+		return "start link"
+	}
 }

@@ -336,22 +336,32 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.queryResult = styleDim.Render("still loading…")
 				return m, nil
 			}
-			// Start here, walk anywhere, commit there. Two presses of the same
-			// key, with a banner in between saying what is pending — rather
-			// than a form asking the user to type a target id, which is the
-			// one thing a graph browser exists to avoid.
-			if m.linking == nil {
-				kind, tp := m.vertexKind()
-				m.linking = &pendingLink{fromID: m.currentID, kind: kind, typeName: tp}
+			// L is the LINK key, and what it does follows the same rule as
+			// everything else — what is the subject.
+			//
+			//   a link is pending   → commit it here (the banner says so)
+			//   a link is selected  → edit that link
+			//   otherwise           → start a link from this vertex
+			//
+			// The commit case wins while something is pending because the
+			// banner has been promising it across every keystroke since; the
+			// cursor happening to rest on a link row must not change what the
+			// screen said it would do.
+			if m.linking != nil {
+				f, refusal := openLinkCreateForm(m)
+				if refusal != "" {
+					m.queryResult = styleDim.Render(refusal)
+					return m, nil
+				}
+				m.form = &f
 				m.queryResult = ""
 				return m, nil
 			}
-			f, refusal := openLinkCreateForm(m)
-			if refusal != "" {
-				m.queryResult = styleDim.Render(refusal)
-				return m, nil
+			if subj := m.subject(); subj.kind == subjLink {
+				return m.openSubjectEditor(subj, "body")
 			}
-			m.form = &f
+			kind, tp := m.vertexKind()
+			m.linking = &pendingLink{fromID: m.currentID, kind: kind, typeName: tp}
 			m.queryResult = ""
 			return m, nil
 
@@ -804,7 +814,13 @@ func (m tuiModel) applyMutationResult(msg mutationResultMsg) (tea.Model, tea.Cmd
 	}
 	m.errMsg = ""
 
-	// A pending link is cleared only when its source really did go away.
+	// A pending link is cleared when it was committed, or when its source
+	// really did go away. Committing used to clear NOTHING, so the banner sat
+	// there promising a commit that had already happened — and every later L
+	// meant "commit again" instead of whatever it should have meant.
+	if msg.clearPending && msg.res.status != opFailed {
+		m.linking = nil
+	}
 	if msg.clearLinkIf != "" && msg.res.status == opApplied &&
 		m.linking != nil && m.linking.fromID == msg.clearLinkIf {
 		m.linking = nil

@@ -948,3 +948,21 @@ func (m tuiModel) vpHeight() int {
 	}
 	return h
 }
+
+// displayLinksOf builds the link list from a vertex read, the same way
+// fetchLinksCmd's fast path does. ok is false when the runtime did not return
+// the structured form, in which case the links are not classifiable without a
+// per-link fan-out.
+func displayLinksOf(fvi fullVertexInfo) ([]displayLink, bool) {
+	if len(fvi.outFull)+len(fvi.inFull) != len(fvi.outLinks)+len(fvi.inLinks) {
+		return nil, false
+	}
+	links := make([]displayLink, 0, len(fvi.outFull)+len(fvi.inFull))
+	for _, fli := range fvi.outFull {
+		links = append(links, displayLink{info: fli, isOut: true})
+	}
+	for _, fli := range fvi.inFull {
+		links = append(links, displayLink{info: fli, isOut: false})
+	}
+	return links, true
+}

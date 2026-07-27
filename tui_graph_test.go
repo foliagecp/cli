@@ -210,7 +210,7 @@ func TestLinkDetail_ComesFromTheServerNotTheModel(t *testing.T) {
 		t.Fatal("fixture is wrong — the fast path leaves tags nil")
 	}
 
-	msg := runCmd(fetchLinkDetailCmd(keyOf(dl), 0)).(linkDetailMsg)
+	msg := runCmd(fetchLinkDetailCmd(dl, 0)).(linkDetailMsg)
 	if len(msg.detail.tags) != 2 || msg.detail.tags[0] != "a" {
 		t.Errorf("tags = %v, want [a b] read from the server", msg.detail.tags)
 	}
@@ -230,7 +230,7 @@ func TestLinkDetail_DebounceOnlyFiresForTheLinkStillUnderTheCursor(t *testing.T)
 		t.Error("a debounce for a link the cursor left must not issue a read")
 	}
 	// And one for a load that has been superseded.
-	if _, cmd := m.applyLinkPeek(linkPeekMsg{key: resting, gen: m.loadGen + 1}); cmd != nil {
+	if _, cmd := m.applyLinkPeek(linkPeekMsg{key: resting, dl: m.grouped.outGroups[0].links[0], gen: m.loadGen + 1}); cmd != nil {
 		t.Error("a debounce from a superseded load must not issue a read")
 	}
 }
@@ -239,12 +239,12 @@ func TestLinkDetail_ReadIsIssuedOnceAndKeptUntilAWrite(t *testing.T) {
 	m := makeModel("hub/a", threeLinks(), nil)
 	m, _ = m.peekCursorLink()
 
-	m, cmd := m.applyLinkPeek(linkPeekMsg{key: m.linkPeek, gen: m.loadGen})
+	m, cmd := m.applyLinkPeek(linkPeekMsg{key: m.linkPeek, dl: m.grouped.outGroups[0].links[0], gen: m.loadGen})
 	if cmd == nil {
 		t.Fatal("resting on an unread link should issue exactly one read")
 	}
 	// A second debounce while the first is in flight must not double-fetch.
-	if _, again := m.applyLinkPeek(linkPeekMsg{key: m.linkPeek, gen: m.loadGen}); again != nil {
+	if _, again := m.applyLinkPeek(linkPeekMsg{key: m.linkPeek, dl: m.grouped.outGroups[0].links[0], gen: m.loadGen}); again != nil {
 		t.Error("a read is already in flight — the debounce must not fire twice")
 	}
 

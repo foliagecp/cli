@@ -90,7 +90,14 @@ func linkEndpoints(dl displayLink) (owner, target string) {
 // the user is never guessing which API the next keystroke will call.
 func (m tuiModel) tierOfSubjectLink(dl displayLink) linkTier {
 	nearKind, _ := m.vertexKind()
-	farKind, _ := inferFarKind(dl)
+	farKind, settled := inferFarKind(dl)
+	if !settled {
+		// Resolved by the detail read; until it lands the tier is provisional
+		// and the panel says "reading the link…" anyway.
+		if d, ok := m.linkDetails[keyOf(dl)]; ok && d.loaded {
+			farKind = d.farKind
+		}
+	}
 	return tierOfExistingLink(dl, nearKind, farKind, m.llMode)
 }
 

@@ -37,6 +37,16 @@ type linkDetail struct {
 	tags   []string
 	body   easyjson.JSON
 	err    error
+
+	// farKind is what the vertex at the other end of the edge is.
+	//
+	// It decides which API owns the edge, and for a USER-typed edge — an
+	// objects-link carries the schema's own link type, not a structural one —
+	// nothing about the edge itself reveals it. Guessing "plain" there sends
+	// every objects-link to the raw API, which the high-level mode then
+	// refuses: exactly the state where the only editable links were the
+	// structural ones.
+	farKind vertexKind
 }
 
 // linkPeekMsg fires after the cursor has rested on a link. Holding `j` down a
@@ -45,6 +55,7 @@ type linkDetail struct {
 // every cursor move, turns scrolling into a request storm.
 type linkPeekMsg struct {
 	key linkKey
+	dl  displayLink
 	gen int
 }
 
@@ -56,9 +67,10 @@ type linkDetailMsg struct {
 
 const linkPeekDelay = 120 * time.Millisecond
 
-func peekLinkCmd(key linkKey, gen int) tea.Cmd {
+func peekLinkCmd(dl displayLink, gen int) tea.Cmd {
+	key := keyOf(dl)
 	return tea.Tick(linkPeekDelay, func(time.Time) tea.Msg {
-		return linkPeekMsg{key: key, gen: gen}
+		return linkPeekMsg{key: key, dl: dl, gen: gen}
 	})
 }
 
@@ -69,18 +81,36 @@ func peekLinkCmd(key linkKey, gen int) tea.Cmd {
 // and tags for less ceremony — and it works even when the CMDB layer would
 // refuse to resolve the edge, which is exactly when a user most wants to look
 // at it. Tier routing belongs on the write path, where it changes what happens.
-func fetchLinkDetailCmd(key linkKey, gen int) tea.Cmd {
+func fetchLinkDetailCmd(dl displayLink, gen int) tea.Cmd {
+	key := keyOf(dl)
+	far := canonID(dl.target())
+	farKind, settled := inferFarKind(dl)
+
 	return func() tea.Msg {
 		data, err := ops.linkRead(key.from, key.name)
 		if err != nil {
 			return linkDetailMsg{key: key, gen: gen, detail: linkDetail{loaded: true, err: err}}
 		}
-		d := linkDetail{loaded: true, tags: []string{}, body: easyjson.NewJSONObject()}
+		d := linkDetail{
+			loaded: true, tags: []string{},
+			body: easyjson.NewJSONObject(), farKind: farKind,
+		}
 		if arr, ok := data.GetByPath("tags").AsArrayString(); ok {
 			d.tags = arr
 		}
 		if b := data.GetByPath("body"); b.IsObject() {
 			d.body = b
+		}
+		// A user-typed edge says nothing about what it connects, so the far
+		// vertex has to be read. One extra request, for the one link the user
+		// stopped on, and only when the edge type could not settle it.
+		if !settled && far != "" {
+			if fvi, ferr := getVertexFullInfo(far); ferr == nil {
+				links, ok := displayLinksOf(fvi)
+				if ok {
+					d.farKind, _ = classifyVertex(far, links)
+				}
+			}
 		}
 		return linkDetailMsg{key: key, gen: gen, detail: d}
 	}
@@ -111,7 +141,7 @@ func (m tuiModel) peekCursorLink() (tuiModel, tea.Cmd) {
 	if _, known := m.linkDetails[key]; known {
 		return m, nil
 	}
-	return m, peekLinkCmd(key, m.loadGen)
+	return m, peekLinkCmd(dl, m.loadGen)
 }
 
 // applyLinkPeek handles the debounce firing: read the link only if the cursor
@@ -129,7 +159,7 @@ func (m tuiModel) applyLinkPeek(msg linkPeekMsg) (tuiModel, tea.Cmd) {
 	// Recorded as in-flight so a second debounce cannot double-fetch; `loaded`
 	// stays false, which is what makes the view say "reading…".
 	m.linkDetails[msg.key] = linkDetail{}
-	return m, fetchLinkDetailCmd(msg.key, m.loadGen)
+	return m, fetchLinkDetailCmd(msg.dl, m.loadGen)
 }
 
 func (m tuiModel) applyLinkDetail(msg linkDetailMsg) tuiModel {

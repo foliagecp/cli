@@ -144,8 +144,21 @@ gated on.
 | Key | Action |
 |---|---|
 | `n` | New… — what can be created from where you are standing |
-| `L` | Start a link here · press again at the target to commit |
+| `L` | The link key — see below |
 | `Esc` | Cancel a pending link |
+
+`L` follows the subject like everything else, and the status bar always says
+which of the three it will do:
+
+| where you are | `L` |
+|---|---|
+| a link is selected in a side column | **edit** that link |
+| a link is pending | **commit** it here |
+| otherwise | **start** a link from this vertex |
+
+Commit wins while something is pending, because the banner has been promising
+that commit across every keystroke since it appeared — where the cursor
+happens to rest must not change what the screen said it would do.
 
 **You create a thing where that thing lives.** Types are created from
 `hub/types`, objects from their own type, sub-types from the parent type, and a
@@ -164,6 +177,11 @@ having a browser:
 1. Stand on the source, press `L` — a banner appears: `◆ LINK PENDING  srv-1 ──▶ …`
 2. Navigate anywhere. Every key keeps working; the banner stays.
 3. At the target press `L` again to commit, or `Esc` to cancel.
+
+Editing a link obeys the armed CRUD API like everything else: in high-level
+mode you can edit types-links, objects-links, claimed-type object links and
+sub-type edges — the ones the CMDB owns — and a raw link between plain vertices
+is refused until you press `x`.
 
 Which API the link goes through is derived from the endpoints and shown in the
 form title: type→type creates a **types-link** (a schema declaration),
