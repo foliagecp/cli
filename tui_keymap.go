@@ -192,6 +192,8 @@ func formHints(f *formState) string {
 		return ""
 	}
 	switch {
+	case f.submitting:
+		return "Esc:stop waiting"
 	case f.kind == formCreateMenu:
 		// Letter accelerators, not a field form — there is nothing to Tab
 		// between, so nothing claims there is.

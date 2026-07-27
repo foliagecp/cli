@@ -495,3 +495,81 @@ func TestReload_IsTheOneThingNavigationCannotDo(t *testing.T) {
 		t.Error("r should issue a real read")
 	}
 }
+
+// TestDelete_SaysItIsWorking is the fix for "I type the word, it goes green, I
+// press Enter, and nothing happens".
+//
+// Something did happen — the request went out. But formState.submitting gated
+// input and was rendered NOWHERE, so a submitted form looked exactly like an
+// unsubmitted one, for as long as the server took to answer. On a slow call, or
+// one that runs to the NATS timeout, that reads as a dead key.
+func TestDelete_SaysItIsWorking(t *testing.T) {
+	withOps(t, graphOps{
+		typesLinkDelete: func(string, string) opResult { return opResult{status: opApplied} },
+	})
+
+	schema := displayLink{info: makeLinkInfo("hub/srv", "rack", "hub/rack", ltInstanceOf), isOut: true}
+	m := makeModel("hub/srv", []displayLink{
+		{info: makeLinkInfo(hubID("types"), "srv", "hub/srv", ltInstanceOf), isOut: false},
+		schema,
+	}, nil)
+	m.width, m.height = 130, 24
+	m.focus = panelOut
+	m.rCursor = 1
+
+	m = update(m, key("d"))
+	before := stripANSI(m.renderCenterPanel())
+	for _, r := range "srv" {
+		m = update(m, key(string(r)))
+	}
+	m, cmd := updateCmd(m, keyEnter())
+
+	if cmd == nil {
+		t.Fatal("Enter on a matching word must submit")
+	}
+	if m.form == nil || !m.form.submitting {
+		t.Fatal("the form should be in flight")
+	}
+	after := stripANSI(m.renderCenterPanel())
+	if after == before {
+		t.Error("the screen must change when the request goes out — an unchanged " +
+			"screen is indistinguishable from a key that did nothing")
+	}
+	if !strings.Contains(after, "deleting…") {
+		t.Errorf("say what is happening:\n%s", after)
+	}
+	if !strings.Contains(stripANSI(m.renderStatus()), "Esc") {
+		t.Error("say how to stop waiting")
+	}
+}
+
+func TestDelete_AFailureSaysWhy(t *testing.T) {
+	withOps(t, graphOps{
+		typesLinkDelete: func(string, string) opResult {
+			return opResult{status: opFailed, details: "type is in use"}
+		},
+	})
+
+	schema := displayLink{info: makeLinkInfo("hub/srv", "rack", "hub/rack", ltInstanceOf), isOut: true}
+	m := makeModel("hub/srv", []displayLink{
+		{info: makeLinkInfo(hubID("types"), "srv", "hub/srv", ltInstanceOf), isOut: false},
+		schema,
+	}, nil)
+	m.width, m.height = 130, 24
+	m.focus = panelOut
+	m.rCursor = 1
+
+	m = update(m, key("d"))
+	for _, r := range "srv" {
+		m = update(m, key(string(r)))
+	}
+	_, cmd := updateCmd(m, keyEnter())
+	m = update(m, runCmd(cmd))
+
+	if m.form != nil {
+		t.Error("a finished request should close the form either way")
+	}
+	if !strings.Contains(stripANSI(m.renderStatus()), "type is in use") {
+		t.Errorf("the server's reason must be on screen:\n%s", stripANSI(m.renderStatus()))
+	}
+}

@@ -51,6 +51,15 @@ func (m tuiModel) renderFormCenter(w, h int) string {
 	}
 
 	lines := []string{styleTitle.Render(truncateCells(f.title, w)), ""}
+	if f.submitting {
+		lines = append(lines, truncateCells("  "+styleLoading.Render("working…"), w),
+			"", truncateCells("  "+styleDim.Render(
+				"waiting for the server; Esc gives up on the answer, not on the write"), w))
+		for len(lines) < h {
+			lines = append(lines, "")
+		}
+		return strings.Join(lines[:h], "\n")
+	}
 	// Facts the form is ABOUT, as opposed to what it will write: how the edge
 	// is addressed, which cannot be changed here.
 	for _, r := range f.contextRows {
@@ -369,6 +378,18 @@ func (m tuiModel) renderConfirm(f *formState, w, h int) string {
 		lines = append(lines, truncateCells("  "+styleMetaVal.Render(seg), w))
 	}
 	lines = append(lines, "")
+
+	// A submitted form used to look EXACTLY like an unsubmitted one: the flag
+	// gated input and was rendered nowhere. Press Enter on a request that takes
+	// a second — or the full NATS timeout — and the screen does not move, which
+	// reads as "the key did nothing".
+	if f.submitting {
+		lines = append(lines, truncateCells("  "+styleLoading.Render("deleting…"), w))
+		for len(lines) < h {
+			lines = append(lines, "")
+		}
+		return strings.Join(lines[:h], "\n")
+	}
 
 	if f.confirmWord == "" {
 		lines = append(lines, truncateCells("  "+styleDim.Render("Delete it?"), w))

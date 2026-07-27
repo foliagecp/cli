@@ -228,6 +228,10 @@ does:
   computation on every descendant — likewise confirmed by name
 - everything else is a single-key `y`/`n`
 
+A form that has been submitted says so — `working…` / `deleting…` — until the
+server answers. Without that, pressing Enter on a call that takes a moment
+looks exactly like a key that did nothing.
+
 A cascading delete asks you to type a word, and the confirmation **shows which
 word** next to the box you type it in — for a types-link it is the owner type's
 name, because the deletion reaches every object of that type, which is not the
