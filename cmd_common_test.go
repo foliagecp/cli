@@ -109,9 +109,9 @@ func TestValidateID(t *testing.T) {
 	}
 
 	invalid := map[string]string{
-		"":         "empty",
-		"a.b":      "dot is the KV separator",
-		"a/b/c":    "more than one domain separator",
+		"":          "empty",
+		"a.b":       "dot is the KV separator",
+		"a/b/c":     "more than one domain separator",
 		"has space": "space is outside the charset",
 	}
 	for id, why := range invalid {

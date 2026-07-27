@@ -385,12 +385,12 @@ func liveOps() graphOps {
 // and — worse — the cache invalidation, leaving stale entries behind. Same rule
 // the export result already follows.
 type mutationResultMsg struct {
-	op         string   // "vertex.create", "objects.link.delete", … — for the toast
-	target     string   // primary id the operation acted on
-	res        opResult
-	invalidate []string // cache entries to evict
-	clearAll   bool     // cascading op ⇒ wipe the whole cache
-	refresh    bool     // reload the current vertex afterwards
-	navTo      string   // non-empty ⇒ navigate here (post-delete escape)
-	clearAnchorIf string // clear the anchor when it equals this id
+	op            string // "vertex.create", "objects.link.delete", … — for the toast
+	target        string // primary id the operation acted on
+	res           opResult
+	invalidate    []string // cache entries to evict
+	clearAll      bool     // cascading op ⇒ wipe the whole cache
+	refresh       bool     // reload the current vertex afterwards
+	navTo         string   // non-empty ⇒ navigate here (post-delete escape)
+	clearAnchorIf string   // clear the anchor when it equals this id
 }

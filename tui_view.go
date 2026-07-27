@@ -293,7 +293,11 @@ func (m tuiModel) renderCenterPanel() string {
 	if m.rawBody {
 		rawMark = styleDim.Render(" [raw]")
 	}
-	title := styleTitle.Render("◈ "+truncateCells(m.currentID, cw/2)) + m.vertexKindBadge() + rawMark
+	llMark := ""
+	if m.llMode {
+		llMark = styleWarn.Render(" [LL]")
+	}
+	title := styleTitle.Render("◈ "+truncateCells(m.currentID, cw/2)) + m.vertexKindBadge() + rawMark + llMark
 
 	var body string
 	if len(m.queryResults) > 0 {
@@ -508,6 +512,11 @@ func (m tuiModel) viewNarrow() string {
 func (m tuiModel) View() string {
 	if !m.ready || m.width == 0 {
 		return "Starting…"
+	}
+	// A full-screen form owns the whole window; it needs the room, and the
+	// narrow fallback has no centre panel to host anything smaller.
+	if m.form != nil && m.form.chrome == chromeFull {
+		return m.renderFormFull()
 	}
 	if m.isNarrow() {
 		return m.viewNarrow()

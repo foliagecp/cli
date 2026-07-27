@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -55,10 +56,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.outTypes2 = nil
 		m.inTypes2 = nil
 		m.grouped = buildGroupedView(msg.links, m.searchQuery)
-		m.rCursor = 0
-		m.lCursor = 0
-		m.rOffset = 0
-		m.lOffset = 0
+		if m.restore != nil {
+			// Refresh triggered by the user's own edit (or by `r`): put them
+			// back where they were rather than at the top of the list.
+			m = applyRestore(m, m.restore)
+			m.restore = nil
+		} else {
+			m.rCursor = 0
+			m.lCursor = 0
+			m.rOffset = 0
+			m.lOffset = 0
+		}
 		m = m.refreshBody()
 		if m.ready {
 			m.bodyVP.GotoTop()
@@ -164,8 +172,40 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queryResult = styleDim.Render("✓ saved → " + msg.file)
 		}
 		return m, nil
+
+	case mutationResultMsg:
+		// Never gen-guarded: the write already happened on the server, so
+		// dropping this would hide the outcome AND the cache invalidation.
+		return m.applyMutationResult(msg)
+
+	case editorDoneMsg:
+		// Likewise unguarded — the user's edit exists and must not vanish.
+		if msg.err != nil {
+			m.queryResult = styleErr.Render("editor: " + msg.err.Error())
+			return m, nil
+		}
+		ed := (*jsonEditor)(nil)
+		if m.form != nil {
+			ed = m.form.editor()
+		}
+		if ed == nil {
+			// The form was closed while the editor ran. Say so rather than
+			// swallowing the text — a silently discarded edit is worse than
+			// a discarded edit the user knows about.
+			m.queryResult = styleDim.Render("editor result discarded (form closed)")
+			return m, nil
+		}
+		ed.ta.SetValue(msg.text)
+		ed.validate()
+		f := m.form.validate()
+		m.form = &f
+		return m, nil
 	}
 
+	// A form is modal: it is checked before every other mode.
+	if m.form != nil {
+		return m.updateForm(msg)
+	}
 	if m.queryMode {
 		return m.updateQuery(msg)
 	}
@@ -292,6 +332,34 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.refreshBody()
 			if m.ready {
 				m.bodyVP.GotoTop()
+			}
+			return m, nil
+
+		case "i":
+			// Edit the current vertex's body. Refused while a load is in
+			// flight: the form snapshots the body at open time, and there is
+			// no point snapshotting one that is about to be replaced.
+			if m.loading {
+				m.queryResult = styleDim.Render("still loading…")
+				return m, nil
+			}
+			f, ok := openBodyEditForm(m)
+			if !ok {
+				m.queryResult = styleDim.Render("nothing to edit here")
+				return m, nil
+			}
+			m.form = &f
+			m.queryResult = ""
+			return m, textarea.Blink
+
+		case "x":
+			// Force the low-level API. Session state, shown in the header at
+			// all times so it can never be on by surprise.
+			m.llMode = !m.llMode
+			if m.llMode {
+				m.queryResult = styleDim.Render("low-level API on — typed operations bypassed")
+			} else {
+				m.queryResult = styleDim.Render("low-level API off")
 			}
 			return m, nil
 
@@ -476,6 +544,86 @@ func (m tuiModel) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.lOffset = 0
 	m = m.refreshBody()
 	return m, cmd
+}
+
+// ── Form mode ─────────────────────────────────────────────────────────────────
+
+func (m tuiModel) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
+	kMsg, isKey := msg.(tea.KeyMsg)
+	if !isKey {
+		// Cursor blink and the like belong to the widget.
+		if ed := m.form.editor(); ed != nil {
+			var cmd tea.Cmd
+			ed.ta, cmd = ed.ta.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+	}
+
+	f, action := m.form.handleKey(kMsg.String())
+	m.form = &f
+
+	switch action {
+	case actClose:
+		m.form = nil
+		return m, nil
+	case actSubmit:
+		return m, submitFormCmd(f)
+	case actOpenEditor:
+		if ed := f.editor(); ed != nil {
+			return m, openEditorCmd(ed.ta.Value())
+		}
+		return m, nil
+	}
+
+	// Not consumed by the state machine: it belongs to the focused widget.
+	if ed := f.editor(); ed != nil {
+		var cmd tea.Cmd
+		ed.ta, cmd = ed.ta.Update(msg)
+		ed.validate()
+		vf := f.validate()
+		m.form = &vf
+		return m, cmd
+	}
+	return m, nil
+}
+
+// applyMutationResult folds a completed mutation back into the model: report
+// it, evict what it invalidated, and reload if the view is now stale.
+func (m tuiModel) applyMutationResult(msg mutationResultMsg) (tea.Model, tea.Cmd) {
+	m.form = nil
+	m.queryResult = toastFor(msg)
+
+	if msg.res.status == opFailed {
+		// Failures also go to the header, which persists until the next
+		// successful load — a cursor move must not wipe the reason.
+		m.errMsg = msg.res.details
+		return m, nil
+	}
+	m.errMsg = ""
+
+	if msg.clearAll {
+		m = m.invalidateAll()
+	} else {
+		m = m.invalidate(msg.invalidate...)
+	}
+
+	if msg.navTo != "" {
+		m.loadGen++
+		m.loading = true
+		m.linksTotal = 0
+		return m, fetchVertexCmd(msg.navTo, m.loadGen)
+	}
+
+	if msg.refresh {
+		// Keep the user where they were standing across the reload.
+		m.restore = captureRestore(m)
+		m.loadGen++
+		m.loading = true
+		m.linksTotal = 0
+		return m, fetchVertexCmd(m.currentID, m.loadGen)
+	}
+	return m, nil
 }
 
 // ── Export mode ───────────────────────────────────────────────────────────────

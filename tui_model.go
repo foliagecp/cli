@@ -283,6 +283,20 @@ type tuiModel struct {
 
 	rawBody bool
 
+	// form holds the active CRUD form, or nil. It is checked FIRST in the
+	// dispatch chain, so "a form is modal" is the semantics rather than a
+	// convention. Keeping it a single nullable field leaves every existing
+	// mode and every existing test untouched.
+	form *formState
+
+	// llMode forces the low-level API even on typed vertices — the escape
+	// hatch for inspecting or repairing graph state that the high-level API
+	// would refuse to express.
+	llMode bool
+
+	// restore carries view state across a reload; see tui_restore.go.
+	restore *viewRestore
+
 	width  int
 	height int
 }
@@ -783,7 +797,11 @@ var (
 
 	styleErr     = lipgloss.NewStyle().Foreground(colorErr)
 	styleLoading = lipgloss.NewStyle().Foreground(colorLoading)
-	styleSearch  = lipgloss.NewStyle().Background(lipgloss.Color("226")).Foreground(lipgloss.Color("16"))
+
+	// CRUD feedback: applied vs. a mode that destroys data if misread.
+	styleOk     = lipgloss.NewStyle().Foreground(colorOut)
+	styleWarn   = lipgloss.NewStyle().Bold(true).Foreground(colorIn)
+	styleSearch = lipgloss.NewStyle().Background(lipgloss.Color("226")).Foreground(lipgloss.Color("16"))
 )
 
 // ── Dimensions ────────────────────────────────────────────────────────────────
