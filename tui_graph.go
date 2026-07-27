@@ -284,6 +284,43 @@ func tierOfExistingLink(dl displayLink, nearKind, farKind vertexKind, llMode boo
 	return tier
 }
 
+// inferFarKind names the far endpoint's kind from the edge alone.
+//
+// The graph's own edges are typed, and their types say what is on the other
+// end: only a type is reached by `__sub`, only an object by an outgoing
+// `__object`. That matters because the alternative — asking the cache, and
+// degrading to the raw API when the user has not walked there — would make a
+// types-link delete cascade or not depending on where the user had been, which
+// is the kind of rule nobody can hold in their head.
+//
+// User-typed edges (an objects-link carries the schema's own link type) carry
+// no such evidence, and for those the caller falls back to the cache.
+func inferFarKind(dl displayLink) (vertexKind, bool) {
+	switch dl.info.tp {
+	case ltSubType:
+		return vkType, true // type --__sub--> type
+	case ltInstance:
+		if dl.isOut {
+			return vkObject, true // type --__object--> instance
+		}
+		if dl.info.id.from == hubID("objects") {
+			return vkStructural, true
+		}
+		return vkType, true // my type claims me as its instance
+	case ltInstanceOf:
+		if !dl.isOut && dl.info.id.from == hubID("types") {
+			return vkStructural, true
+		}
+		// Outgoing: my own type, or a types-link target. Incoming from
+		// anywhere but the types root: somebody's types-link points at me,
+		// and only a type declares one.
+		return vkType, true
+	case ltTypesRoot, ltObjectsRt:
+		return vkStructural, true
+	}
+	return vkPlain, false
+}
+
 // parseSuperLinkType splits the compound link type the server writes for an
 // objects-link declared under claimed super-types: "<fromClaim>#<toClaim>#<rel>".
 func parseSuperLinkType(tp string) (fromClaim, toClaim, rel string, ok bool) {

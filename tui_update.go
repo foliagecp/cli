@@ -197,7 +197,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		ed := (*jsonEditor)(nil)
 		if m.form != nil {
-			ed = m.form.editor()
+			ed = m.form.jsonField()
 		}
 		if ed == nil {
 			// The form was closed while the editor ran. Say so rather than
@@ -331,22 +331,22 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "i":
-			// Edit the current vertex's body. Refused while a load is in
+		case "i", "I":
+			// Edit the SUBJECT — the selected link, or the vertex when the
+			// cursor is not on one. `I` is the escape hatch that always means
+			// the vertex, mirroring how `d`/`D` already work. Refused while a
+			// load is in
 			// flight: the form snapshots the body at open time, and there is
 			// no point snapshotting one that is about to be replaced.
 			if m.loading {
 				m.queryResult = styleDim.Render("still loading…")
 				return m, nil
 			}
-			f, ok := openBodyEditForm(m)
-			if !ok {
-				m.queryResult = styleDim.Render("nothing to edit here")
-				return m, nil
+			subj := m.subject()
+			if msg.String() == "I" {
+				subj = subject{kind: subjVertex}
 			}
-			m.form = &f
-			m.queryResult = ""
-			return m, textarea.Blink
+			return m.openSubjectEditor(subj, "body")
 
 		case "L":
 			if m.loading {
@@ -383,23 +383,30 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "t":
-			dl, ok := m.cursorLink()
-			if !ok {
+			// The same editor as `i`, landing on the tags row. Kept as its own
+			// key because it was already documented as "edit the link's tags"
+			// and that promise still holds exactly — what changed is that the
+			// tags shown are now the real ones.
+			if m.loading {
+				m.queryResult = styleDim.Render("still loading…")
+				return m, nil
+			}
+			subj := m.subject()
+			if subj.kind != subjLink {
 				m.queryResult = styleDim.Render("put the cursor on a link to edit its tags")
 				return m, nil
 			}
-			f := openLinkTagsForm(m, dl)
-			m.form = &f
-			m.queryResult = ""
-			return m, nil
+			return m.openSubjectEditor(subj, "tags")
 
 		case "y":
-			if m.fvi == nil || m.fvi.body == nil {
+			subj := m.subject()
+			body, ok := m.bodyOfSubject(subj)
+			if !ok {
 				m.queryResult = styleDim.Render("nothing to yank")
 				return m, nil
 			}
-			m.bodyRegister = prettyJSON(*m.fvi.body)
-			m.queryResult = styleDim.Render("yanked body of " + stripDomain(m.currentID))
+			m.bodyRegister = prettyJSON(body)
+			m.queryResult = styleDim.Render("yanked body of " + m.subjectLabel(subj))
 			return m, nil
 
 		case "d", "D":
@@ -675,7 +682,7 @@ func (m tuiModel) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, submitFormCmd(f)
 	case actOpenEditor:
-		if ed := f.editor(); ed != nil {
+		if ed := f.jsonField(); ed != nil {
 			return m, openEditorCmd(ed.ta.Value())
 		}
 		return m, nil
@@ -991,4 +998,38 @@ func (m tuiModel) clampQueryScroll() tuiModel {
 		m.qOffset = m.qCursor - visible + 1
 	}
 	return m
+}
+
+// openSubjectEditor opens the editor for whatever the cursor is on.
+//
+// The link case cannot open synchronously: the vertex read that fills the link
+// panels deliberately skips tags and bodies, so a form built from the model
+// would show blanks over real data — and a REPLACE submit would then destroy
+// what the user was never shown. It waits for the detail read instead, and
+// says so.
+func (m tuiModel) openSubjectEditor(subj subject, focusKey string) (tuiModel, tea.Cmd) {
+	if subj.kind == subjLink {
+		f, refusal := openLinkEditForm(m, subj.link, focusKey)
+		if refusal != "" {
+			m.queryResult = styleDim.Render(refusal)
+			// Nothing has been read for this edge yet — ask for it now rather
+			// than telling the user to press the key again.
+			if _, known := m.linkDetails[keyOf(subj.link)]; !known {
+				return m.applyLinkPeek(linkPeekMsg{key: keyOf(subj.link), gen: m.loadGen})
+			}
+			return m, nil
+		}
+		m.form = &f
+		m.queryResult = ""
+		return m, textarea.Blink
+	}
+
+	f, ok := openBodyEditForm(m)
+	if !ok {
+		m.queryResult = styleDim.Render("nothing to edit here")
+		return m, nil
+	}
+	m.form = &f
+	m.queryResult = ""
+	return m, textarea.Blink
 }

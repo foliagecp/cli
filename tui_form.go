@@ -75,6 +75,7 @@ type formCtx struct {
 	toType   string
 	linkName string
 	linkType string
+	tier     linkTier
 	origBody easyjson.JSON
 	entity   entityKind
 	llMode   bool
@@ -94,8 +95,8 @@ const (
 	formVertexCreate
 	formTypeCreate
 	formObjectCreate
-	formLinkTags
 	formSubTypeSet
+	formLinkEdit
 )
 
 type formState struct {
@@ -105,6 +106,10 @@ type formState struct {
 	fields []formField
 	cur    int
 	ctx    formCtx
+
+	// contextRows are read-only facts rendered above the fields: what the form
+	// is about, as opposed to what it will write.
+	contextRows []string
 
 	// confirmation sub-state (delete flows)
 	confirm     bool
@@ -173,9 +178,29 @@ func (f formState) focused() *formField {
 }
 
 // editor returns the focused JSON editor, if the focused field has one.
+// editor returns the FOCUSED field's editor. Use it only for routing
+// keystrokes into a textarea — a form-wide question wants jsonField.
 func (f formState) editor() *jsonEditor {
 	if fl := f.focused(); fl != nil {
 		return fl.json
+	}
+	return nil
+}
+
+// jsonField returns the form's JSON editor regardless of what has focus. A form
+// has at most one.
+//
+// Keying "does this form have an editor" off the FOCUSED field was harmless
+// while the only editor form was a single JSON field. The moment a sibling
+// field can take focus — tags next to a link body — ctrl+r and ctrl+e become
+// silent no-ops, the full-screen renderer claims the form has no editor at all,
+// and an $EDITOR round-trip that lands while focus is elsewhere throws the
+// user's text away with "editor result discarded".
+func (f formState) jsonField() *jsonEditor {
+	for i := range f.fields {
+		if f.fields[i].json != nil {
+			return f.fields[i].json
+		}
 	}
 	return nil
 }
@@ -319,13 +344,13 @@ func (f formState) handleKey(k string) (formState, formAction) {
 		return f, actNone
 
 	case "ctrl+e":
-		if f.editor() != nil {
+		if f.jsonField() != nil {
 			return f, actOpenEditor
 		}
 		return f, actNone
 
 	case "ctrl+r":
-		if ed := f.editor(); ed != nil {
+		if ed := f.jsonField(); ed != nil {
 			ed.replace = !ed.replace
 		}
 		return f, actNone

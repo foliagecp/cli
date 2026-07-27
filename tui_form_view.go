@@ -13,12 +13,16 @@ import (
 
 // editorSize returns the textarea dimensions for a full-screen form:
 // the whole window minus title, footer strip, hint line and borders.
-func (m tuiModel) editorSize() (int, int) {
+func (m tuiModel) editorSize() (int, int) { return m.editorSizeFor(0) }
+
+// editorSizeFor leaves room for extraRows of chrome above the textarea — the
+// context block and the tags row of a link edit.
+func (m tuiModel) editorSizeFor(extraRows int) (int, int) {
 	w := m.width - 4
 	if w < 20 {
 		w = 20
 	}
-	h := m.height - 6
+	h := m.height - 6 - extraRows
 	if h < 3 {
 		h = 3
 	}
@@ -31,7 +35,7 @@ func (m tuiModel) renderFormFull() string {
 	if f == nil {
 		return ""
 	}
-	ed := f.editor()
+	ed := f.jsonField()
 	if ed == nil {
 		return styleErr.Render("form has no editor")
 	}
@@ -72,7 +76,41 @@ func (m tuiModel) renderFormFull() string {
 		hint("Esc", "cancel"),
 	}, sep)
 
-	rows := []string{title, mode, ed.ta.View(), status}
+	rows := []string{title}
+	// Context the edge is addressed BY, and cannot be changed here: the API
+	// locates a link by its owner and name, and moving an endpoint is a delete
+	// plus a create. Shown rather than omitted, so the form says which of
+	// several same-named edges it is about to write.
+	for _, r := range f.contextRows {
+		rows = append(rows, styleDim.Render(truncateCells(r, m.width-2)))
+	}
+	// Editable fields other than the body — currently just tags.
+	for i, fl := range f.fields {
+		if fl.kind == fieldJSON {
+			continue
+		}
+		label := styleDim.Render("  " + fl.label + "  ")
+		if i == f.cur {
+			label = styleHintKey.Render("▸ " + fl.label + "  ")
+		}
+		var val string
+		if fl.kind == fieldTags {
+			val = renderTagChips(fl.value)
+			if len(fl.value) == 0 {
+				val = styleDim.Render("(none)")
+			}
+		} else {
+			val = styleMetaVal.Render(fl.value)
+		}
+		if i == f.cur {
+			val += styleHintSep.Render("▏")
+		}
+		rows = append(rows, truncateCells(label+val, m.width-2))
+		if fl.err != "" {
+			rows = append(rows, truncateCells(styleErr.Render("    ✗ "+fl.err), m.width-2))
+		}
+	}
+	rows = append(rows, mode, ed.ta.View(), status)
 	if preserved != "" {
 		rows = append(rows, preserved)
 	}
@@ -220,14 +258,15 @@ var helpSections = []helpSection{
 		{"Esc", "cancel a pending link"},
 	}},
 	{"Modify", []helpEntry{
-		{"i", "edit the current vertex's body"},
-		{"t", "edit the selected link's tags"},
-		{"x", "toggle the low-level API (shown as [LL] in the header)"},
-		{"y", "yank the displayed body, to reuse as a template"},
+		{"i", "edit what the cursor is on — the selected link, or the vertex"},
+		{"I", "always the current vertex's body"},
+		{"t", "edit the selected link, starting on its tags"},
+		{"x", "toggle the low-level API (shown as [LL] beside the id)"},
+		{"y", "yank the body on screen, to reuse as a template"},
 	}},
 	{"Delete", []helpEntry{
-		{"d", "delete the selected link, or the vertex if not on one"},
-		{"D", "delete the current vertex"},
+		{"d", "delete what the cursor is on — the selected link, or the vertex"},
+		{"D", "always the current vertex"},
 	}},
 	{"Editing a body", []helpEntry{
 		{"ctrl+s", "apply"},

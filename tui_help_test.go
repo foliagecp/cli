@@ -49,7 +49,7 @@ var navKeys = []string{
 	"j", "k", "h", "l", "enter", "tab", "b", "R", "g", "G",
 	"v", "c", "/", "f", "e", "r",
 	"n", "L", "esc",
-	"i", "t", "x", "y",
+	"i", "I", "t", "x", "y",
 	"d", "D",
 	"?",
 }

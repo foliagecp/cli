@@ -454,59 +454,6 @@ func TestTags_NeedsALinkUnderTheCursor(t *testing.T) {
 	}
 }
 
-func TestTags_PrefilledAndSubmitted(t *testing.T) {
-	var gotTags []string
-	var gotReplace bool
-	withOps(t, graphOps{
-		linkUpdate: func(_, _ string, tags []string, _ easyjson.JSON, replace bool) opResult {
-			gotTags, gotReplace = tags, replace
-			return opResult{status: opApplied}
-		},
-	})
-
-	links := threeLinks()
-	links[0].info.tags = []string{"old"}
-	m := makeModel("root", links, nil)
-	m.rCursor = 1
-
-	m = update(m, key("t"))
-	if m.form == nil {
-		t.Fatal("t should open the tag form")
-	}
-	if got := m.form.value("tags"); !strings.Contains(got, "old") {
-		t.Errorf("tags prefill = %q, want the existing tags", got)
-	}
-
-	m = typeText(m, ",new")
-	_, cmd := updateCmd(m, tea_ctrlS())
-	runCmd(cmd)
-
-	if strings.Join(gotTags, ",") != "old,new" {
-		t.Errorf("tags = %v, want [old new]", gotTags)
-	}
-	if gotReplace {
-		t.Error("replace should default to off")
-	}
-}
-
-func TestTags_ReplaceIsAdvertisedAsTheWayToClear(t *testing.T) {
-	// Every write wrapper drops empty tags, so clearing them under a merge
-	// silently does nothing. The form must say so.
-	links := threeLinks()
-	links[0].info.tags = []string{"old"}
-	m := makeModel("root", links, nil)
-	m.rCursor = 1
-	m = update(m, key("t"))
-
-	fl, ok := m.form.field("replace")
-	if !ok {
-		t.Fatal("the tag form needs a replace toggle")
-	}
-	if !strings.Contains(fl.hint, "clear") {
-		t.Errorf("hint = %q, want it to explain that clearing needs replace", fl.hint)
-	}
-}
-
 // ── Yank ──────────────────────────────────────────────────────────────────────
 
 func TestYank_CapturesTheBody(t *testing.T) {

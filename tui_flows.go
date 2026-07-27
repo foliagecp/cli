@@ -76,8 +76,8 @@ func submitFormCmd(f formState) tea.Cmd {
 		return submitDeleteLinkCmd(f)
 	case formLinkCreate:
 		return submitLinkCreateCmd(f)
-	case formLinkTags:
-		return submitLinkTagsCmd(f)
+	case formLinkEdit:
+		return submitLinkEditCmd(f)
 	case formVertexCreate, formTypeCreate, formObjectCreate, formSubTypeSet:
 		return submitCreateCmd(f)
 	}
@@ -207,9 +207,21 @@ func openDeleteVertexForm(m tuiModel) (formState, string) {
 // For an INCOMING link the owner is the other vertex, not the one on screen —
 // linkId.from is already the owner, and the prompt spells the direction out so
 // the user is not surprised about which side loses the edge.
+// openDeleteLinkForm confirms deleting an edge, at a weight that matches what
+// the deletion actually does.
+//
+// Deleting a schema link is not deleting one edge. The CMDB cascade walks every
+// instance of the source type and removes the corresponding edge from each —
+// which is precisely why removing one with the raw API is a corruption: the
+// declaration disappears and every instance keeps a link the schema no longer
+// permits. The TUI used to do exactly that while `cmdb typeslink delete`
+// cascaded correctly, so the same action meant two different things depending
+// on where you ran it. Now it cascades here too, behind the same typed-name
+// confirmation a type delete demands.
 func openDeleteLinkForm(m tuiModel, dl displayLink) formState {
-	owner := dl.info.id.from
+	owner, target := linkEndpoints(dl)
 	kind, _ := m.vertexKind()
+	tier := m.tierOfSubjectLink(dl)
 
 	f := formState{
 		kind:     formDeleteLink,
@@ -218,15 +230,28 @@ func openDeleteLinkForm(m tuiModel, dl displayLink) formState {
 		affected: -1,
 		ctx: formCtx{
 			fromID:   owner,
-			toID:     dl.info.to,
+			toID:     target,
 			fromKind: kind,
 			linkName: dl.info.id.name,
 			linkType: dl.info.tp,
+			tier:     tier,
 			llMode:   m.llMode,
 		},
 	}
-	arrow := " —" + dl.info.tp + "▶ "
-	f.title = "Delete link " + stripDomain(owner) + arrow + stripDomain(dl.info.to) + "?"
+
+	arrow := " —" + orDash(dl.info.tp) + "▶ "
+	switch tier {
+	case tierTypesLink:
+		f.confirmWord = stripDomain(owner)
+		f.title = "DELETE TYPES-LINK " + stripDomain(owner) + arrow + stripDomain(target) +
+			" — this also removes that link from every object of " + stripDomain(owner) + "."
+	case tierSubType:
+		f.confirmWord = stripDomain(target)
+		f.title = "REMOVE SUB-TYPE " + stripDomain(target) + " from " + stripDomain(owner) +
+			" — every object of " + stripDomain(target) + " loses what it inherited."
+	default:
+		f.title = "Delete " + tier.noun() + " " + stripDomain(owner) + arrow + stripDomain(target) + "?"
+	}
 	return f
 }
 
@@ -270,18 +295,37 @@ func submitDeleteVertexCmd(f formState) tea.Cmd {
 }
 
 func submitDeleteLinkCmd(f formState) tea.Cmd {
-	from, to := f.ctx.fromID, f.ctx.toID
+	owner, target := f.ctx.fromID, f.ctx.toID
 	name := f.ctx.linkName
+	tier := f.ctx.tier
+	fromClaim, toClaim, _, isSuper := parseSuperLinkType(f.ctx.linkType)
 
 	return func() tea.Msg {
-		res := ops.linkDelete(from, name)
-		return mutationResultMsg{
-			op:         "link.delete",
-			target:     from + ":" + name,
-			res:        res,
-			invalidate: []string{from, to},
+		msg := mutationResultMsg{
+			target:     stripDomain(owner) + " ──▶ " + stripDomain(target),
+			invalidate: []string{owner, target},
 			refresh:    true,
 		}
+		switch {
+		case tier == tierTypesLink:
+			msg.op, msg.res = "typeslink.delete", ops.typesLinkDelete(owner, target)
+			// The cascade touches every instance of the source type. Anything
+			// short of dropping the cache would be guesswork about which.
+			msg.clearAll, msg.invalidate = true, nil
+		case tier == tierSubType:
+			msg.op, msg.res = "type.subtype.rm", ops.subTypeRemove(owner, target)
+			// Removing a sub-type relation re-runs the inheritance computation
+			// on arbitrary descendants.
+			msg.clearAll, msg.invalidate = true, nil
+		case tier == tierSuperLink && isSuper:
+			msg.op, msg.res = "objectslink.super.delete",
+				ops.superLinkDelete(owner, target, fromClaim, toClaim)
+		case tier == tierObjectsLink:
+			msg.op, msg.res = "objectslink.delete", ops.objectsLinkDelete(owner, target)
+		default:
+			msg.op, msg.res = "link.delete", ops.linkDelete(owner, name)
+		}
+		return msg
 	}
 }
 
@@ -698,42 +742,126 @@ func submitCreateCmd(f formState) tea.Cmd {
 	return nil
 }
 
-// ── Link tags ─────────────────────────────────────────────────────────────────
+// ── Link edit ─────────────────────────────────────────────────────────────────
 
-func openLinkTagsForm(m tuiModel, dl displayLink) formState {
+// entityForTier picks which body paths are machine-owned on an edge. This is
+// what finally makes entTypesLink reachable: a types-link's `body.type` is the
+// object-link type its instances inherit, so a REPLACE that dropped it would
+// silently rewrite the schema. The protection was written long ago and no code
+// path ever produced the entity that switches it on.
+func entityForTier(t linkTier) entityKind {
+	if t == tierTypesLink {
+		return entTypesLink
+	}
+	return entLink
+}
+
+// openLinkEditForm edits an existing edge: its tags and its body, together.
+//
+// Together, because the server applies `replace` to BOTH with a single flag —
+// two controls for one flag is a lie, and the previous tags-only form told it
+// by hardcoding an empty body, so ticking `replace` to clear tags also wiped
+// the body nobody could see.
+//
+// The detail must already be loaded. Seeding from the model is what produced a
+// blank tags field over a link that had tags.
+func openLinkEditForm(m tuiModel, dl displayLink, focusKey string) (formState, string) {
+	detail, loaded := m.linkDetailFor(dl)
+	if !loaded {
+		return formState{}, "reading the link…"
+	}
+	if detail.err != nil {
+		return formState{}, "✗ cannot read link: " + detail.err.Error()
+	}
+
+	owner, target := linkEndpoints(dl)
+	tier := m.tierOfSubjectLink(dl)
+	entity := entityForTier(tier)
+
+	w, h := m.editorSizeFor(len(linkEditContextRows(dl, tier)) + 2)
+	ed := newJSONEditor(detail.body, entity, w, h)
+
 	f := formState{
-		kind:   formLinkTags,
-		title:  "Tags of " + dl.info.id.name,
-		chrome: chromeCenter,
+		kind:        formLinkEdit,
+		title:       "Edit " + tier.noun() + " — " + stripDomain(owner) + " ──▶ " + stripDomain(target),
+		chrome:      chromeFull,
+		contextRows: linkEditContextRows(dl, tier),
 		ctx: formCtx{
-			fromID:   dl.info.id.from,
-			toID:     dl.info.to,
+			fromID:   owner,
+			toID:     target,
 			linkName: dl.info.id.name,
 			linkType: dl.info.tp,
-			entity:   entLink,
+			tier:     tier,
+			entity:   entity,
+			origBody: detail.body,
+			llMode:   m.llMode,
 		},
 		fields: []formField{
 			{key: "tags", label: "tags", kind: fieldTags,
-				value: strings.Join(dl.info.tags, ", "),
+				value: strings.Join(detail.tags, ", "),
 				hint:  "space or comma separated"},
-			{key: "replace", label: "replace", kind: fieldBool,
-				hint: "REQUIRED to clear tags — a merge can only add them"},
+			{key: "body", label: "body", kind: fieldJSON, json: ed},
 		},
 	}
-	return f.validate()
+	if focusKey == "tags" {
+		f.cur = 0
+	} else {
+		f.cur = 1
+	}
+	return f.validate(), ""
 }
 
-func submitLinkTagsCmd(f formState) tea.Cmd {
-	from, name := f.ctx.fromID, f.ctx.linkName
-	to := f.ctx.toID
+// linkEditContextRows are the facts that identify the edge but cannot be
+// changed: the API addresses a link BY its owner and name, and moving an
+// endpoint is a delete plus a create, not an update. They are shown rather
+// than omitted because without them the form does not say which of several
+// same-named edges it is about to write.
+func linkEditContextRows(dl displayLink, tier linkTier) []string {
+	owner, target := linkEndpoints(dl)
+	rows := []string{
+		"endpoints  " + stripDomain(owner) + " ──▶ " + stripDomain(target),
+		"name       " + dl.info.id.name,
+		"type       " + orDash(dl.info.tp),
+		"via        " + tier.noun(),
+	}
+	if from, to, rel, ok := parseSuperLinkType(dl.info.tp); ok {
+		rows = append(rows, "as         "+from+" ──▶ "+to+"   rel "+rel)
+	}
+	return rows
+}
+
+func submitLinkEditCmd(f formState) tea.Cmd {
+	owner, target := f.ctx.fromID, f.ctx.toID
+	name := f.ctx.linkName
 	tags := f.tags("tags")
-	replace := f.boolean("replace")
+	body := bodyOrEmpty(f, "body")
+	ed := f.jsonField()
+	replace := ed != nil && ed.replace
+	tier := f.ctx.tier
+	fromClaim, toClaim, _, isSuper := parseSuperLinkType(f.ctx.linkType)
 
 	return func() tea.Msg {
-		res := ops.linkUpdate(from, name, tags, easyjson.NewJSONObject(), replace)
+		var (
+			res opResult
+			op  string
+		)
+		switch {
+		case tier == tierTypesLink:
+			op = "typeslink.update"
+			res = ops.typesLinkUpdate(owner, target, tags, body, replace)
+		case tier == tierSuperLink && isSuper:
+			op = "objectslink.super.update"
+			res = ops.superLinkUpdate(owner, target, fromClaim, toClaim, name, tags, body, replace)
+		case tier == tierObjectsLink:
+			op = "objectslink.update"
+			res = ops.objectsLinkUpdate(owner, target, tags, body, replace)
+		default:
+			op = "link.update"
+			res = ops.linkUpdate(owner, name, tags, body, replace)
+		}
 		return mutationResultMsg{
-			op: "link.tags", target: from + ":" + name,
-			res: res, invalidate: []string{from, to}, refresh: true,
+			op: op, target: stripDomain(owner) + " ──▶ " + stripDomain(target),
+			res: res, invalidate: []string{owner, target}, refresh: true,
 		}
 	}
 }

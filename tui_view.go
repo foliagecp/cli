@@ -297,7 +297,14 @@ func (m tuiModel) renderCenterPanel() string {
 	if m.llMode {
 		llMark = styleWarn.Render(" [LL]")
 	}
+	// The title names the SUBJECT, so the panel and the header never disagree
+	// about what the next keystroke will act on.
+	subj := m.subject()
 	title := styleTitle.Render("◈ "+truncateCells(m.currentID, cw/2)) + m.vertexKindBadge() + rawMark + llMark
+	if subj.kind == subjLink {
+		title = styleTitle.Render("⎯ "+truncateCells(subj.link.info.id.name, cw/2)) +
+			" " + styleMetaKey.Render("["+m.tierOfSubjectLink(subj.link).noun()+"]")
+	}
 
 	var body string
 	switch {
@@ -305,6 +312,8 @@ func (m tuiModel) renderCenterPanel() string {
 		body = m.renderFormCenter(cw, m.vpHeight())
 	case len(m.queryResults) > 0:
 		body = m.renderQueryResults(cw, m.vpHeight())
+	case subj.kind == subjLink:
+		body = m.renderLinkSubject(subj.link, cw, m.vpHeight())
 	default:
 		body = m.bodyVP.View()
 	}
