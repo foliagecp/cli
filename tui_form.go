@@ -1,6 +1,8 @@
 package main
 
 import (
+	"strings"
+
 	"github.com/foliagecp/easyjson"
 )
 
@@ -87,6 +89,12 @@ const (
 	formBodyEdit formKind = iota
 	formDeleteVertex
 	formDeleteLink
+	formLinkCreate
+	formCreateMenu
+	formVertexCreate
+	formTypeCreate
+	formObjectCreate
+	formLinkTags
 )
 
 type formState struct {
@@ -208,9 +216,17 @@ func validateField(fl formField) string {
 			}
 			return ""
 		}
-		if err := validateID(fl.label, fl.value); err != nil {
-			// validateID formats for the shell; strip the marker for the TUI.
-			return trimLeadingMark(err.Error())
+		// Short messages on purpose: a form row is one line and gets clipped
+		// to the panel width, so the shell's fuller wording would lose its
+		// tail exactly where the actionable part is.
+		if strings.Contains(fl.value, ".") {
+			return "dots are not allowed (the KV key separator)"
+		}
+		if strings.Count(fl.value, "/") > 1 {
+			return "at most one / — it separates the domain"
+		}
+		if !validIDRe.MatchString(fl.value) {
+			return "allowed: a-z A-Z 0-9 / _ $ # @ % + = -"
 		}
 	case fieldText:
 		if fl.required && fl.value == "" {
@@ -232,13 +248,6 @@ func validateField(fl formField) string {
 		}
 	}
 	return ""
-}
-
-func trimLeadingMark(s string) string {
-	if len(s) > 2 && s[0:len("✗ ")] == "✗ " {
-		return s[len("✗ "):]
-	}
-	return s
 }
 
 // splitTags parses a tag field: comma or space separated, deduped.
@@ -374,6 +383,24 @@ func (f formState) handleKey(k string) (formState, formAction) {
 		}
 		f.cur = f.nextField(+1)
 		return f, actNone
+	}
+
+	// Typing into a text-ish field. The JSON field has its own widget and is
+	// fed by updateForm instead.
+	switch fl.kind {
+	case fieldText, fieldID, fieldTags:
+		switch {
+		case k == "backspace":
+			if r := []rune(fl.value); len(r) > 0 {
+				fl.value = string(r[:len(r)-1])
+			}
+			return f.validate(), actNone
+		case len([]rune(k)) == 1:
+			// Single printable rune. Longer strings are chords (ctrl+…,
+			// arrows, "shift+tab") and must not be inserted as text.
+			fl.value += k
+			return f.validate(), actNone
+		}
 	}
 
 	return f, actNone

@@ -300,9 +300,12 @@ func (m tuiModel) renderCenterPanel() string {
 	title := styleTitle.Render("◈ "+truncateCells(m.currentID, cw/2)) + m.vertexKindBadge() + rawMark + llMark
 
 	var body string
-	if len(m.queryResults) > 0 {
+	switch {
+	case m.form != nil && m.form.chrome == chromeCenter:
+		body = m.renderFormCenter(cw, m.vpHeight())
+	case len(m.queryResults) > 0:
 		body = m.renderQueryResults(cw, m.vpHeight())
-	} else {
+	default:
 		body = m.bodyVP.View()
 	}
 
@@ -513,6 +516,9 @@ func (m tuiModel) View() string {
 	if !m.ready || m.width == 0 {
 		return "Starting…"
 	}
+	if m.helpOpen {
+		return m.renderHelp()
+	}
 	// A full-screen form owns the whole window; it needs the room, and the
 	// narrow fallback has no centre panel to host anything smaller.
 	if m.form != nil && m.form.chrome == chromeFull {
@@ -623,10 +629,23 @@ func (m tuiModel) renderHeader() string {
 
 func (m tuiModel) renderBreadcrumbs() string {
 	bc := m.breadcrumbs()
-	if bc == "" {
-		return ""
+	if m.anchor == nil {
+		if bc == "" {
+			return ""
+		}
+		return lipgloss.NewStyle().Width(m.width).Render(bc)
 	}
-	return lipgloss.NewStyle().Width(m.width).Render(bc)
+	// The anchor is the actionable item on this row, so it is rendered first
+	// and the history crumbs give way when the row overflows.
+	mark := styleWarn.Render("⚓ " + stripDomain(m.anchor.id))
+	rest := ""
+	if bc != "" {
+		avail := m.width - lipgloss.Width(mark) - 3
+		if avail > 8 {
+			rest = "   " + truncateCells(bc, avail)
+		}
+	}
+	return lipgloss.NewStyle().Width(m.width).Render(mark + rest)
 }
 
 func hint(key, desc string) string {
@@ -693,21 +712,24 @@ func (m tuiModel) renderStatus() string {
 	case m.errMsg != "":
 		s = hint("r", "retry") + "  " + hint("R", "→ root") + "  " + hint("q", "quit")
 	default:
-		s = strings.Join([]string{
-			hint("h/l", "switch panel"),
-			hint("jk", "navigate"),
+		// Deliberately short. There are ~25 bindings now and they cannot all
+		// fit on one line at 80 columns; the full list lives behind `?`.
+		// These are the ones used constantly.
+		parts := []string{
+			hint("jk", "nav"),
 			hint("Enter", "go"),
-			hint("Tab", "collapse"),
 			hint("b", "back"),
-			hint("v", "raw"),
-			hint("c", "copy id"),
-			hint("/", "query"),
-			hint("f", "search"),
-			hint("e", "export"),
-			hint("r", "refresh"),
-			hint("g/G", "body ↑↓"),
-			hint("q", "quit"),
-		}, sep)
+			hint("n", "new"),
+			hint("i", "edit"),
+			hint("d", "del"),
+		}
+		if m.anchor != nil {
+			parts = append(parts, hint("L", "link from ⚓"))
+		} else {
+			parts = append(parts, hint("a", "anchor"))
+		}
+		parts = append(parts, hint("?", "help"))
+		s = strings.Join(parts, sep)
 	}
 	return styleStatus.Width(m.width).Render(s)
 }

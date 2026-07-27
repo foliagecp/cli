@@ -202,6 +202,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.helpOpen {
+		if _, isKey := msg.(tea.KeyMsg); isKey {
+			m.helpOpen = false
+		}
+		return m, nil
+	}
 	// A form is modal: it is checked before every other mode.
 	if m.form != nil {
 		return m.updateForm(msg)
@@ -352,6 +358,64 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queryResult = ""
 			return m, textarea.Blink
 
+		case "a":
+			// Anchor is data, not a mode: every navigation key keeps working
+			// while it is set.
+			if m.anchor != nil && m.anchor.id == m.currentID {
+				m.anchor = nil
+				m.queryResult = styleDim.Render("⚓ anchor cleared")
+				return m, nil
+			}
+			kind, tp := m.vertexKind()
+			m.anchor = &anchorState{id: m.currentID, kind: kind, typeName: tp}
+			m.queryResult = styleDim.Render("⚓ anchored " + stripDomain(m.currentID) +
+				" — navigate to the target and press L")
+			return m, nil
+
+		case "L":
+			if m.loading {
+				m.queryResult = styleDim.Render("still loading…")
+				return m, nil
+			}
+			f, refusal := openLinkCreateForm(m)
+			if refusal != "" {
+				m.queryResult = styleDim.Render(refusal)
+				return m, nil
+			}
+			m.form = &f
+			m.queryResult = ""
+			return m, nil
+
+		case "n":
+			if m.loading {
+				m.queryResult = styleDim.Render("still loading…")
+				return m, nil
+			}
+			f := openCreateMenu(m)
+			m.form = &f
+			m.queryResult = ""
+			return m, nil
+
+		case "t":
+			dl, ok := m.cursorLink()
+			if !ok {
+				m.queryResult = styleDim.Render("put the cursor on a link to edit its tags")
+				return m, nil
+			}
+			f := openLinkTagsForm(m, dl)
+			m.form = &f
+			m.queryResult = ""
+			return m, nil
+
+		case "y":
+			if m.fvi == nil || m.fvi.body == nil {
+				m.queryResult = styleDim.Render("nothing to yank")
+				return m, nil
+			}
+			m.bodyRegister = prettyJSON(*m.fvi.body)
+			m.queryResult = styleDim.Render("yanked body of " + stripDomain(m.currentID))
+			return m, nil
+
 		case "d", "D":
 			if m.loading {
 				m.queryResult = styleDim.Render("still loading…")
@@ -374,6 +438,11 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.form = &f
+			m.queryResult = ""
+			return m, nil
+
+		case "?":
+			m.helpOpen = true
 			m.queryResult = ""
 			return m, nil
 
@@ -447,6 +516,7 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, fetchVertexCmd(m.currentID, m.loadGen)
 
 		case "R":
+			m.anchor = nil
 			m.queryResult = ""
 			m.queryResults = nil
 			m.errMsg = ""
@@ -585,6 +655,12 @@ func (m tuiModel) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// The create menu is a letter-accelerator list, not a field form: a
+	// keystroke picks an entry outright.
+	if m.form.kind == formCreateMenu {
+		return m.updateCreateMenu(kMsg)
+	}
+
 	f, action := m.form.handleKey(kMsg.String())
 	m.form = &f
 
@@ -621,6 +697,47 @@ func (m tuiModel) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		vf := f.validate()
 		m.form = &vf
 		return m, cmd
+	}
+	return m, nil
+}
+
+// updateCreateMenu turns a letter into the form it names.
+func (m tuiModel) updateCreateMenu(kMsg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	k := kMsg.String()
+	if k == "esc" || k == "ctrl+c" || k == "q" {
+		m.form = nil
+		return m, nil
+	}
+
+	for _, e := range createMenuFor(m) {
+		if e.key != k {
+			continue
+		}
+		if e.disabled != "" {
+			// Kept visible but inert: the user learns what is missing.
+			m.form.err = e.disabled
+			return m, nil
+		}
+		var f formState
+		switch e.kind {
+		case formVertexCreate:
+			f = openVertexCreateForm(m)
+		case formTypeCreate:
+			f = openTypeCreateForm(m)
+		case formObjectCreate:
+			f = openObjectCreateForm(m)
+		case formLinkCreate:
+			lf, refusal := openLinkCreateForm(m)
+			if refusal != "" {
+				m.form.err = refusal
+				return m, nil
+			}
+			f = lf
+		default:
+			return m, nil
+		}
+		m.form = &f
+		return m, nil
 	}
 	return m, nil
 }

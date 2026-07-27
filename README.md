@@ -39,27 +39,131 @@ Opens a full-screen three-panel TUI. Navigation starts from the last persisted p
   h/l:panel  jk:nav  Enter:go  Tab:collapse  b:back  v:raw  q:quit
 ```
 
-**Keybindings:**
+Press `?` inside the TUI for the full keymap — the status bar only has room for
+the most-used bindings.
+
+**Navigate and view**
 
 | Key | Action |
 |---|---|
 | `h` / `l` | Switch focus between incoming and outgoing panels |
-| `j` / `↓` | Move cursor down |
-| `k` / `↑` | Move cursor up |
+| `j` / `↓`, `k` / `↑` | Move cursor |
 | `Enter` | Navigate to selected vertex; on a group header — toggle collapse |
 | `Tab` | Toggle collapse of the current link-type group |
 | `b` / `Backspace` | Go back (history stack) |
 | `v` | Toggle raw JSON body vs. key-value view |
 | `c` | Copy current vertex ID to clipboard |
 | `/` | JPGQL query from current vertex |
-| `f` | Live filter links by name |
-| `Esc` | Clear active filter |
+| `f` | Live filter links by name · `Esc` clears |
 | `e` | Export graph to file (graphml / dot / json2xml), choose depth |
-| `r` | Refresh current vertex (evicts from cache) |
-| `Ctrl+R` | Refresh and clear the entire cache |
-| `R` | Jump to `root` and reset all state |
+| `r` / `Ctrl+R` | Refresh current vertex · also clear the entire cache |
+| `R` | Jump to `root` and reset all state, including the anchor |
 | `g` / `G` | Scroll body up / down |
+| `?` | Show the full keymap |
 | `q` / `Ctrl+C` | Quit |
+
+**Create**
+
+| Key | Action |
+|---|---|
+| `n` | New… — a menu of what can be created where you are standing |
+| `a` | Anchor the current vertex as a link source (press again to clear) |
+| `L` | Create a link from the anchor to the current vertex |
+
+Linking is "walk, then link": press `a` on the source, navigate to the target
+however you like, then press `L`. The anchor stays visible in the breadcrumb
+row and survives navigation — it is data, not a mode. Inside the form, `←`/`→`
+swaps the direction, so one anchor covers both.
+
+Which API the link goes through is derived from the endpoints and shown in the
+form title: type→type creates a **types-link** (a schema declaration), object→object
+an **objects-link** (whose link type comes from that schema and is therefore not
+editable), and anything else a **raw link**.
+
+**Modify and delete**
+
+| Key | Action |
+|---|---|
+| `i` | Edit a body — the current vertex's |
+| `t` | Edit the tags of the selected link |
+| `y` | Yank the displayed body, to reuse elsewhere |
+| `x` | Toggle the low-level API — shown as `[LL]` in the header |
+| `d` | Delete the selected link, or the vertex if the cursor is not on one |
+| `D` | Delete the current vertex |
+
+> **Note:** `d` previously scrolled the body half a page (an undocumented
+> binding inherited from the viewport widget, duplicating `G`). It now deletes.
+
+Inside the body editor: `Ctrl+S` apply · `Ctrl+R` switch MERGE ⇄ REPLACE ·
+`Ctrl+E` open `$EDITOR` · `Esc` cancel. JSON is validated as you type and
+submission is blocked while it is invalid. Machine-owned paths (`triggers`,
+`cache`, …) are held aside and listed under the editor, so nothing is lost.
+
+Deleting a **type** requires typing its name, because it removes every object
+of that type. Structural vertices (`root`, `types`, `objects`, `trash_can`, …)
+are refused outright.
+
+---
+
+### `graph` and `cmdb` — CRUD from the shell
+
+Everything the TUI can do is also available non-interactively, for scripting
+and for building reproducible fixtures. The two groups mirror the SDK's own
+split: `graph` is the low-level API (raw vertices and links, no CMDB
+semantics), `cmdb` is the typed one.
+
+```
+graph  vertex      create|update|delete|read
+graph  link        create|update|delete|read
+cmdb   type        create|update|delete|read
+cmdb   type subtype add|rm
+cmdb   typeslink   create|update|delete|read
+cmdb   object      create|update|delete|read
+cmdb   objectslink create|update|delete|read
+cmdb   objectslink super create|update|delete
+```
+
+A positional id may be omitted, in which case the `gwalk` cursor is used —
+the same idiom `gwalk inspect` and `gwalk query` already follow:
+
+```sh
+foliage-cli gwalk to srv-1
+foliage-cli graph link create --to rack-A --type rel   # from = srv-1
+foliage-cli cmdb object read                           # the cursor vertex
+```
+
+A worked example — schema first, then instances:
+
+```sh
+foliage-cli cmdb type create srv --body '{"desc":"server"}'
+foliage-cli cmdb type create rack
+foliage-cli cmdb typeslink create srv rack --object-link-type mounted_in
+foliage-cli cmdb object create srv-1 --type srv --body @srv-1.json
+foliage-cli cmdb object create rack-A --type rack
+foliage-cli cmdb objectslink create srv-1 rack-A
+```
+
+**Shared flags**
+
+| Flag | Meaning |
+|---|---|
+| `--body` | inline JSON, `@file`, or `-` for stdin |
+| `--tags a,b` | comma separated. Omitting it leaves existing tags alone; **clearing them needs `--replace`**, because empty tags are never sent |
+| `--replace` | replace the body instead of deep-merging it (a merge can never remove a key or an array element) |
+| `--json` | machine-readable output |
+| `--yes` | required for a cascading delete |
+
+Flags may come before or after the positional arguments — both orders work.
+
+**Exit codes:** `0` applied or no-op, `1` the operation failed, `2` bad
+arguments or a refused operation. Applied and no-op are reported distinctly
+(`✓` vs `∅`), because the underlying client returns success for both and
+"nothing changed" is worth knowing.
+
+Cascading deletes (`cmdb type delete`, `cmdb typeslink delete`,
+`cmdb type subtype rm`) refuse to run without `--yes` and state the blast
+radius first. There is no interactive prompt: a script that hangs on a
+question is worse than one that fails loudly.
 
 ---
 

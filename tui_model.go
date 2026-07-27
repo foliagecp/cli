@@ -305,6 +305,16 @@ type tuiModel struct {
 	// anchor marks a vertex as the source for the next link; see tui_flows.go.
 	anchor *anchorState
 
+	// bodyRegister holds a yanked body, offered as a template when creating
+	// or editing another entity. Navigating to a sibling, pressing y, and
+	// coming back is how "copy the body of an existing object" works without
+	// any extra API surface.
+	bodyRegister string
+
+	// helpOpen shows the full keymap. Checked before everything else, since
+	// the status bar can only advertise a handful of the bindings.
+	helpOpen bool
+
 	width  int
 	height int
 }
@@ -874,8 +884,10 @@ func (m tuiModel) centerContentW() int {
 	return w
 }
 
+// breadcrumbH also reserves the row for the anchor marker, which lives there
+// even with no history.
 func (m tuiModel) breadcrumbH() int {
-	if len(m.history) > 0 {
+	if len(m.history) > 0 || m.anchor != nil {
 		return 1
 	}
 	return 0

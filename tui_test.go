@@ -1453,15 +1453,34 @@ func TestView_ActivePanelBorderChanges(t *testing.T) {
 
 // ── Status bar ────────────────────────────────────────────────────────────────
 
+// The status bar is one line and there are now ~25 bindings, so it advertises
+// only the constantly-used ones plus the way to see the rest. Anything dropped
+// from here MUST be reachable through the help screen — that is asserted by
+// TestHelp_ListsEveryNavKey.
 func TestStatus_DefaultHints(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", nil, &fvi)
 
 	out := m.renderStatus()
-	for _, h := range []string{"jk", "Enter", "Tab", "b", "v", "q", "h/l"} {
+	for _, h := range []string{"jk", "Enter", "b", "n", "i", "d", "?"} {
 		if !strings.Contains(out, h) {
 			t.Errorf("default status bar should contain hint %q, got:\n%s", h, out)
 		}
+	}
+}
+
+func TestStatus_AnchorReplacesTheAnchorHintWithLink(t *testing.T) {
+	fvi := makeVertexInfo("root", nil, nil)
+	m := makeModel("root", nil, &fvi)
+
+	if !strings.Contains(m.renderStatus(), "anchor") {
+		t.Error("with no anchor set the bar should offer to set one")
+	}
+
+	m.anchor = &anchorState{id: "hub/src"}
+	out := m.renderStatus()
+	if !strings.Contains(out, "L") || !strings.Contains(out, "⚓") {
+		t.Errorf("with an anchor set the bar should offer to link from it, got:\n%s", out)
 	}
 }
 

@@ -74,6 +74,12 @@ func submitFormCmd(f formState) tea.Cmd {
 		return submitDeleteVertexCmd(f)
 	case formDeleteLink:
 		return submitDeleteLinkCmd(f)
+	case formLinkCreate:
+		return submitLinkCreateCmd(f)
+	case formLinkTags:
+		return submitLinkTagsCmd(f)
+	case formVertexCreate, formTypeCreate, formObjectCreate:
+		return submitCreateCmd(f)
 	}
 	return nil
 }
@@ -266,6 +272,383 @@ func submitDeleteLinkCmd(f formState) tea.Cmd {
 			res:        res,
 			invalidate: []string{from, to},
 			refresh:    true,
+		}
+	}
+}
+
+// ── Link creation ─────────────────────────────────────────────────────────────
+
+// linkTier is which API a new link should go through.
+type linkTier int
+
+const (
+	tierRawLink linkTier = iota
+	tierTypesLink
+	tierObjectsLink
+)
+
+// linkTierFor decides the API from the two endpoints. With the low-level
+// toggle on it is always the raw one — that is the whole point of the toggle.
+func linkTierFor(from, to vertexKind, llMode bool) linkTier {
+	if llMode {
+		return tierRawLink
+	}
+	switch {
+	case from == vkType && to == vkType:
+		return tierTypesLink
+	case from == vkObject && to == vkObject:
+		return tierObjectsLink
+	default:
+		// A type↔object or anything involving a plain vertex has no
+		// high-level meaning; the raw API is the honest choice.
+		return tierRawLink
+	}
+}
+
+func (t linkTier) title() string {
+	switch t {
+	case tierTypesLink:
+		return "New types-link"
+	case tierObjectsLink:
+		return "New objects-link"
+	default:
+		return "New raw link (low level)"
+	}
+}
+
+// openLinkCreateForm builds the link form from the anchor to the current
+// vertex. The chosen API tier is in the title so the user can always see which
+// one is about to run.
+func openLinkCreateForm(m tuiModel) (formState, string) {
+	if m.anchor == nil {
+		return formState{}, "press a to anchor a source vertex first"
+	}
+	if m.anchor.id == m.currentID {
+		return formState{}, "the anchor and the target are the same vertex"
+	}
+
+	toKind, toType := m.vertexKind()
+	tier := linkTierFor(m.anchor.kind, toKind, m.llMode)
+
+	f := formState{
+		kind:   formLinkCreate,
+		title:  tier.title(),
+		chrome: chromeCenter,
+		ctx: formCtx{
+			fromID:   m.anchor.id,
+			toID:     m.currentID,
+			fromKind: m.anchor.kind,
+			toKind:   toKind,
+			fromType: m.anchor.typeName,
+			toType:   toType,
+			entity:   entLink,
+			llMode:   m.llMode,
+		},
+	}
+
+	fields := []formField{{
+		key:   "ends",
+		label: "endpoints",
+		kind:  fieldVertex,
+	}}
+
+	switch tier {
+	case tierTypesLink:
+		f.ctx.entity = entTypesLink
+		fields = append(fields, formField{
+			key: "olt", label: "object link type", kind: fieldID, required: true,
+			// Naming it after the target type is the convention the server
+			// itself falls back to for link names.
+			value: stripDomain(m.currentID),
+			hint:  "the link type that object-links between instances will get",
+		})
+	case tierObjectsLink:
+		fields = append(fields, formField{
+			key: "name", label: "name", kind: fieldID,
+			value: stripDomain(m.currentID),
+			hint:  "blank lets the server name it after the target",
+		}, formField{
+			key: "ltype", label: "link type", kind: fieldStatic,
+			static: "(derived from the types-link — checked on submit)",
+		})
+	default:
+		fields = append(fields, formField{
+			key: "name", label: "name", kind: fieldID, required: true,
+			value: stripDomain(m.currentID),
+		}, formField{
+			key: "type", label: "type", kind: fieldID, required: true,
+			value: lastLinkTypeOn(m, m.anchor.id),
+		}, formField{
+			key: "force", label: "force", kind: fieldBool,
+			hint: "overwrite an existing link, bypassing the uniqueness checks",
+		})
+	}
+
+	fields = append(fields, formField{key: "tags", label: "tags", kind: fieldTags})
+	f.fields = fields
+	f.cur = 1 // the endpoints row is informational; start on the first input
+
+	// Local pre-checks against what we already know, so the user is told about
+	// a clash before a round trip rather than by an opaque server error.
+	f = f.validate()
+	return f, ""
+}
+
+// lastLinkTypeOn guesses a link type from what the source vertex already uses,
+// which is right far more often than an empty field.
+func lastLinkTypeOn(m tuiModel, from string) string {
+	for _, dl := range m.links {
+		if dl.isOut && dl.info.id.from == from && dl.info.tp != "" &&
+			!strings.HasPrefix(dl.info.tp, "__") {
+			return dl.info.tp
+		}
+	}
+	return ""
+}
+
+func submitLinkCreateCmd(f formState) tea.Cmd {
+	from, to := f.ctx.fromID, f.ctx.toID
+	tags := f.tags("tags")
+	entity := f.ctx.entity
+
+	name := f.value("name")
+	linkType := f.value("type")
+	olt := f.value("olt")
+	force := f.boolean("force")
+
+	return func() tea.Msg {
+		var (
+			res opResult
+			op  string
+		)
+		switch entity {
+		case entTypesLink:
+			op = "typeslink.create"
+			res = ops.typesLinkCreate(from, to, olt, tags, easyjson.NewJSONObject())
+		case entObject:
+			op = "objectslink.create"
+			res = ops.objectsLinkCreate(from, to, name, tags, easyjson.NewJSONObject())
+		default:
+			if entity == entLink && f.ctx.fromKind == vkObject && f.ctx.toKind == vkObject && !f.ctx.llMode {
+				op = "objectslink.create"
+				res = ops.objectsLinkCreate(from, to, name, tags, easyjson.NewJSONObject())
+			} else {
+				op = "link.create"
+				res = ops.linkCreate(from, to, name, linkType, tags, easyjson.NewJSONObject(), force)
+			}
+		}
+		return mutationResultMsg{
+			op:         op,
+			target:     stripDomain(from) + " → " + stripDomain(to),
+			res:        res,
+			invalidate: []string{from, to},
+			refresh:    true,
+		}
+	}
+}
+
+// ── Create menu ───────────────────────────────────────────────────────────────
+
+type menuEntry struct {
+	key      string
+	label    string
+	disabled string // non-empty ⇒ shown dimmed with this reason
+	kind     formKind
+}
+
+// createMenuFor lists what can be created from where the user is standing.
+// Entries that need an anchor are shown dimmed with the reason rather than
+// hidden — hiding them teaches the user nothing.
+func createMenuFor(m tuiModel) []menuEntry {
+	kind, typeName := m.vertexKind()
+	anchored := m.anchor != nil
+
+	needAnchor := ""
+	if !anchored {
+		needAnchor = "press a to anchor a source vertex first"
+	}
+
+	var out []menuEntry
+	switch {
+	case kind == vkType && !m.llMode:
+		out = append(out,
+			menuEntry{"o", "new object of " + stripDomain(m.currentID), "", formObjectCreate},
+			menuEntry{"l", "new link from ⚓ to here", needAnchor, formLinkCreate},
+			menuEntry{"t", "new type", "", formTypeCreate},
+		)
+	case kind == vkObject && !m.llMode:
+		out = append(out,
+			menuEntry{"l", "new link from ⚓ to here", needAnchor, formLinkCreate},
+			menuEntry{"o", "new object of " + typeName, "", formObjectCreate},
+			menuEntry{"t", "new type", "", formTypeCreate},
+		)
+	default:
+		out = append(out,
+			menuEntry{"v", "new raw vertex", "", formVertexCreate},
+			menuEntry{"l", "new raw link from ⚓ to here", needAnchor, formLinkCreate},
+			menuEntry{"t", "new type", "", formTypeCreate},
+		)
+	}
+	return out
+}
+
+func openCreateMenu(m tuiModel) formState {
+	entries := createMenuFor(m)
+	fields := make([]formField, len(entries))
+	for i, e := range entries {
+		label := e.label
+		if e.disabled != "" {
+			label += "  — " + e.disabled
+		}
+		fields[i] = formField{
+			key: e.key, label: e.key, kind: fieldStatic, static: label,
+		}
+	}
+	return formState{
+		kind:   formCreateMenu,
+		title:  "New…",
+		chrome: chromeCenter,
+		fields: fields,
+	}
+}
+
+// ── Vertex / type / object creation ───────────────────────────────────────────
+
+func openVertexCreateForm(m tuiModel) formState {
+	f := formState{
+		kind:   formVertexCreate,
+		title:  "New raw vertex",
+		chrome: chromeCenter,
+		ctx:    formCtx{entity: entVertex, domain: domainOf(m.currentID)},
+		fields: []formField{
+			{key: "id", label: "id", kind: fieldID, required: true,
+				hint: "will create " + domainOf(m.currentID) + "/<id>"},
+		},
+	}
+	return f.validate()
+}
+
+func openTypeCreateForm(m tuiModel) formState {
+	f := formState{
+		kind:   formTypeCreate,
+		title:  "New type",
+		chrome: chromeCenter,
+		ctx:    formCtx{entity: entType},
+		fields: []formField{
+			{key: "name", label: "name", kind: fieldID, required: true,
+				// Type operations are redirected to the hub regardless of
+				// where the user is browsing.
+				hint: "will create " + NatsHubDomain + "/<name>"},
+		},
+	}
+	return f.validate()
+}
+
+func openObjectCreateForm(m tuiModel) formState {
+	kind, typeName := m.vertexKind()
+
+	typeField := formField{key: "type", label: "type", kind: fieldID, required: true}
+	if kind == vkType {
+		// Standing on the type is the whole point of context sensitivity: the
+		// type is settled, so it is shown but not editable.
+		typeField = formField{key: "type", label: "type", kind: fieldStatic,
+			static: stripDomain(m.currentID)}
+	} else if typeName != "" {
+		typeField.value = typeName
+	}
+
+	f := formState{
+		kind:   formObjectCreate,
+		title:  "New object",
+		chrome: chromeCenter,
+		ctx:    formCtx{entity: entObject, domain: domainOf(m.currentID)},
+		fields: []formField{
+			{key: "id", label: "id", kind: fieldID, required: true,
+				hint: "will create " + domainOf(m.currentID) + "/<id>"},
+			typeField,
+		},
+	}
+	return f.validate()
+}
+
+func domainOf(id string) string {
+	if i := strings.Index(id, "/"); i > 0 {
+		return id[:i]
+	}
+	return NatsHubDomain
+}
+
+func submitCreateCmd(f formState) tea.Cmd {
+	switch f.kind {
+	case formVertexCreate:
+		id := f.value("id")
+		return func() tea.Msg {
+			return mutationResultMsg{
+				op: "vertex.create", target: id,
+				res:        ops.vertexCreate(id, easyjson.NewJSONObject()),
+				invalidate: []string{id},
+			}
+		}
+	case formTypeCreate:
+		name := f.value("name")
+		return func() tea.Msg {
+			return mutationResultMsg{
+				op: "type.create", target: name,
+				res:        ops.typeCreate(name, easyjson.NewJSONObject()),
+				invalidate: []string{name, NatsHubDomain + "/types"},
+				refresh:    true,
+			}
+		}
+	case formObjectCreate:
+		id, tp := f.value("id"), f.value("type")
+		return func() tea.Msg {
+			return mutationResultMsg{
+				op: "object.create", target: id,
+				res:        ops.objectCreate(id, tp, easyjson.NewJSONObject()),
+				invalidate: []string{id, tp, NatsHubDomain + "/objects"},
+				refresh:    true,
+			}
+		}
+	}
+	return nil
+}
+
+// ── Link tags ─────────────────────────────────────────────────────────────────
+
+func openLinkTagsForm(m tuiModel, dl displayLink) formState {
+	f := formState{
+		kind:   formLinkTags,
+		title:  "Tags of " + dl.info.id.name,
+		chrome: chromeCenter,
+		ctx: formCtx{
+			fromID:   dl.info.id.from,
+			toID:     dl.info.to,
+			linkName: dl.info.id.name,
+			linkType: dl.info.tp,
+			entity:   entLink,
+		},
+		fields: []formField{
+			{key: "tags", label: "tags", kind: fieldTags,
+				value: strings.Join(dl.info.tags, ", "),
+				hint:  "space or comma separated"},
+			{key: "replace", label: "replace", kind: fieldBool,
+				hint: "REQUIRED to clear tags — a merge can only add them"},
+		},
+	}
+	return f.validate()
+}
+
+func submitLinkTagsCmd(f formState) tea.Cmd {
+	from, name := f.ctx.fromID, f.ctx.linkName
+	to := f.ctx.toID
+	tags := f.tags("tags")
+	replace := f.boolean("replace")
+
+	return func() tea.Msg {
+		res := ops.linkUpdate(from, name, tags, easyjson.NewJSONObject(), replace)
+		return mutationResultMsg{
+			op: "link.tags", target: from + ":" + name,
+			res: res, invalidate: []string{from, to}, refresh: true,
 		}
 	}
 }
