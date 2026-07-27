@@ -149,15 +149,6 @@ type pendingLink struct {
 
 // ── Delete ────────────────────────────────────────────────────────────────────
 
-// deleteTier grades how much confirmation a deletion needs.
-type deleteTier int
-
-const (
-	tierBlocked  deleteTier = iota // structural vertex: refused outright
-	tierOrdinary                   // single-key y/n
-	tierCascade                    // type the name, and show the blast radius
-)
-
 // openDeleteVertexForm builds the confirmation for deleting the current vertex.
 //
 // The tier depends on what the vertex is: deleting a TYPE walks every instance
@@ -180,10 +171,9 @@ func openDeleteVertexForm(m tuiModel) (formState, string) {
 	}
 
 	f := formState{
-		kind:     formDeleteVertex,
-		chrome:   chromeStatus,
-		confirm:  true,
-		affected: -1,
+		kind:    formDeleteVertex,
+		chrome:  chromeStatus,
+		confirm: true,
 		ctx: formCtx{
 			fromID:   id,
 			fromKind: kind,
@@ -225,10 +215,9 @@ func openDeleteLinkForm(m tuiModel, dl displayLink) formState {
 	tier := m.tierOfSubjectLink(dl)
 
 	f := formState{
-		kind:     formDeleteLink,
-		chrome:   chromeStatus,
-		confirm:  true,
-		affected: -1,
+		kind:    formDeleteLink,
+		chrome:  chromeStatus,
+		confirm: true,
 		ctx: formCtx{
 			fromID:   owner,
 			toID:     target,

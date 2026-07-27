@@ -79,7 +79,10 @@ type formCtx struct {
 	origBody easyjson.JSON
 	entity   entityKind
 	llMode   bool
-	domain   string
+
+	// domain the created entity lands in, so a vertex created beside a
+	// leaf-domain one does not silently become a hub sibling.
+	domain string
 }
 
 // ── Form ──────────────────────────────────────────────────────────────────────
@@ -118,7 +121,6 @@ type formState struct {
 	confirm     bool
 	confirmWord string // "" ⇒ single-key y/n; otherwise must be typed exactly
 	confirmText string
-	affected    int // -1 = unknown
 
 	submitting bool
 	err        string // submission failure

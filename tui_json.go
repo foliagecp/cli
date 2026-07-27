@@ -197,6 +197,9 @@ func (ed *jsonEditor) body() (easyjson.JSON, bool) {
 	return j, true
 }
 
+// setSize re-dimensions an open editor. Called on a terminal resize — without
+// it the textarea kept whatever size it had when it opened, so resizing while
+// editing left the text laid out for the old width.
 func (ed *jsonEditor) setSize(w, h int) {
 	ed.ta.SetWidth(w)
 	ed.ta.SetHeight(h)

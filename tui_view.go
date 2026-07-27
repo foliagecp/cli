@@ -492,6 +492,16 @@ func (m tuiModel) vertexKindBadge() string {
 
 // ── Narrow layout (single-column fallback) ────────────────────────────────────
 
+// viewNarrow is the single-column fallback below narrowThreshold columns.
+//
+// It used to render only the link lists. That meant the vertex body was
+// unreachable, the [LL] marker invisible, and — worst — every chromeCenter
+// form was a fully modal dialog that drew NOTHING while swallowing every
+// keystroke. The user saw an unchanged screen with the ordinary nav hints
+// under it, and their typing went into an input box that was not on screen.
+//
+// The rule now: whatever the mode is, this renders it. A mode with no visible
+// surface is not a narrow-layout compromise, it is a hang.
 func (m tuiModel) viewNarrow() string {
 	w := m.width
 	if w < 1 {
@@ -503,28 +513,74 @@ func (m tuiModel) viewNarrow() string {
 	}
 	divider := styleDim.Render(strings.Repeat("─", w))
 
-	var links string
-	if m.loading {
-		links = styleLoading.Render("loading…")
-	} else if len(m.links) == 0 {
-		links = styleDim.Render("(no links)")
-	} else {
-		links = m.renderPanelLinks(
-			m.grouped.outGroups, m.grouped.outFlat,
-			m.rCursor, m.rOffset, m.focus == panelOut, true, w, listH/2,
-		)
-		links += "\n" + m.renderPanelLinks(
-			m.grouped.inGroups, m.grouped.inFlat,
-			m.lCursor, m.lOffset, m.focus == panelIn, false, w, listH/2,
-		)
+	var main string
+	subj := m.subject()
+	switch {
+	case m.form != nil && m.form.chrome == chromeCenter:
+		// The modal owns the column. Nothing below it is actionable anyway.
+		main = m.renderFormCenter(w, listH)
+	case len(m.queryResults) > 0:
+		main = m.renderQueryResults(w, listH)
+	case m.loading:
+		main = styleLoading.Render("loading…")
+	case subj.kind == subjLink:
+		// The selected link, then as much of the list as still fits.
+		detail := m.renderLinkSubject(subj.link, w, listH/2)
+		main = detail + "\n" + divider + "\n" + m.narrowLinkLists(w, listH-listH/2-1)
+	default:
+		main = m.narrowLinkLists(w, listH)
 	}
 
-	rows := []string{m.renderHeader(), divider, links}
+	rows := []string{m.renderHeader(), m.narrowSubtitle(w), divider, main}
 	if bc := m.renderBreadcrumbs(); bc != "" {
 		rows = append(rows, bc)
 	}
 	rows = append(rows, m.renderStatus())
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+// narrowSubtitle carries what the wide layout puts in the centre panel title:
+// the kind badge and the mode markers. Without it there is no indication at
+// all that the low-level API is armed.
+func (m tuiModel) narrowSubtitle(w int) string {
+	line := m.vertexKindBadge()
+	if m.rawBody {
+		line += styleDim.Render(" [raw]")
+	}
+	if m.llMode {
+		line += styleWarn.Render(" [LL]")
+	}
+	if m.mode() != modeBrowse {
+		line += " " + styleMetaKey.Render("· "+m.mode().String())
+	}
+	return truncateCells(line, w)
+}
+
+func (m tuiModel) narrowLinkLists(w, h int) string {
+	if len(m.grouped.outGroups)+len(m.grouped.inGroups) == 0 {
+		if m.searchQuery != "" {
+			// The wide layout says this; the narrow one used to show a blank
+			// region, because its guard tested m.links while its rendering
+			// read m.grouped.
+			return styleDim.Render("no matches")
+		}
+		return styleDim.Render("(no links)")
+	}
+	half := h / 2
+	if half < 1 {
+		half = 1
+	}
+	out := m.renderPanelLinks(m.grouped.outGroups, m.grouped.outFlat,
+		m.rCursor, m.rOffset, m.focus == panelOut, true, w, half)
+	in := m.renderPanelLinks(m.grouped.inGroups, m.grouped.inFlat,
+		m.lCursor, m.lOffset, m.focus == panelIn, false, w, h-half)
+	if out == "" {
+		return in
+	}
+	if in == "" {
+		return out
+	}
+	return out + "\n" + in
 }
 
 // ── View ──────────────────────────────────────────────────────────────────────
@@ -668,24 +724,34 @@ func hint(key, desc string) string {
 	return styleHintKey.Render(key) + styleHintSep.Render(":"+desc)
 }
 
+// renderStatus draws the bottom line.
+//
+// It is a switch over the mode plus a NOTICE — a toast or an error — that
+// rides alongside the hints rather than replacing them. It used to replace
+// them: a single mutation toast took the whole line and the keymap vanished
+// until something happened to clear it, which for several keys was never. And
+// because the error case sat below both the toast and the active-filter case,
+// an error raised while either was showing was reachable from nowhere on
+// screen — it existed in the model and was displayed by nothing.
 func (m tuiModel) renderStatus() string {
-	var s string
 	sep := styleHintSep.Render("  ")
+
+	var s string
 	switch {
 	case m.form != nil && m.form.chrome == chromeStatus:
-		s = m.renderFormStatus()
+		return styleStatus.Width(m.width).Render(m.renderFormStatus())
 	case m.queryMode:
 		s = "Query: " + m.queryInput.View() + styleHintSep.Render("  Esc:cancel")
 	case m.exportMode && !m.exportDepStep:
 		parts := make([]string, len(exportFmts))
 		for i, f := range exportFmts {
 			if i == m.exportFmtIdx {
-				parts[i] = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true).Render("[" + f.label + "]")
+				parts[i] = styleWarn.Render("[" + f.label + "]")
 			} else {
 				parts[i] = styleDim.Render(f.label)
 			}
 		}
-		s = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true).Render("Export") +
+		s = styleWarn.Render("Export") +
 			"  format: " + strings.Join(parts, "  ") +
 			styleHintSep.Render("  ←→ Tab:change  Enter:→depth  Esc:cancel")
 	case m.exportMode && m.exportDepStep:
@@ -696,18 +762,19 @@ func (m tuiModel) renderStatus() string {
 				lbl = "all"
 			}
 			if i == m.exportDepthIdx {
-				depthParts[i] = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Render("[" + lbl + "]")
+				depthParts[i] = styleWarn.Render("[" + lbl + "]")
 			} else {
 				depthParts[i] = styleDim.Render(lbl)
 			}
 		}
-		s = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true).Render("Export") +
+		s = styleWarn.Render("Export") +
 			"  " + exportFmts[m.exportFmtIdx].label +
 			"  depth: " + m.exportInput.View() +
 			"  " + strings.Join(depthParts, " ") +
 			styleHintSep.Render("  Tab:preset  Enter:export  Esc:back")
 	case m.searchMode:
-		s = "Search: " + m.searchInput.View() + styleHintSep.Render("  Enter:keep  Esc:clear")
+		s = "Search: " + m.searchInput.View() +
+			styleHintSep.Render("  Enter:keep  Esc:restore")
 	case len(m.queryResults) > 0:
 		s = strings.Join([]string{
 			hint("jk", "navigate"),
@@ -715,24 +782,15 @@ func (m tuiModel) renderStatus() string {
 			hint("Esc/b", "close"),
 			hint("q", "quit"),
 		}, sep)
-	case m.queryResult != "":
-		s = "↳ " + m.queryResult
-	case m.searchQuery != "":
-		s = styleSearch.Render(" /"+m.searchQuery+" ") + sep + strings.Join([]string{
-			hint("f", "edit"),
-			hint("Esc", "clear"),
-			hint("jk", "navigate"),
-			hint("Enter/Tab", "go/collapse"),
-			hint("q", "quit"),
-		}, sep)
-	case m.errMsg != "":
-		s = hint("r", "retry") + "  " + hint("R", "→ root") + "  " + hint("q", "quit")
 	default:
+		parts := make([]string, 0, 10)
+		if m.searchQuery != "" {
+			parts = append(parts, styleSearch.Render(" /"+m.searchQuery+" "))
+		}
 		// Rendered from the keymap's `hint` column. There are ~30 bindings and
 		// they cannot all fit on one line at 80 columns; the rest live behind
 		// `?`. Keeping the short form in the same table as the long one is why
 		// the two can no longer disagree.
-		parts := make([]string, 0, 8)
 		for _, h := range statusHints() {
 			if h == "L:link" && m.linking != nil {
 				h = "L:commit link"
@@ -742,9 +800,37 @@ func (m tuiModel) renderStatus() string {
 		parts = append(parts, hintPair("?:help"))
 		s = strings.Join(parts, sep)
 	}
-	return styleStatus.Width(m.width).Render(s)
+
+	// The notice rides alongside, and is clipped rather than allowed to push
+	// the hints off the line. An error outranks a toast: it is the one the
+	// user needs and the one that used to be unreachable.
+	notice := m.queryResult
+	if m.errMsg != "" {
+		notice = styleErr.Render("⚠ " + m.errMsg)
+	}
+	if notice != "" {
+		room := m.width - lipgloss.Width(s) - 5
+		if room >= 8 {
+			s += sep + styleHintSep.Render("↳ ") + truncateCells(notice, room)
+		} else {
+			// Too narrow to show both. The notice is the news; the hints are
+			// always one `?` away.
+			s = styleHintSep.Render("↳ ") + truncateCells(notice, m.width-4)
+		}
+	}
+	return styleStatus.Width(m.width).Render(truncateCells(s, m.width-2))
 }
 
+// truncateCells clips a string to max terminal cells, ANSI-aware.
+//
+// The loop used to walk raw runes and measure each one, so every byte of an
+// escape sequence — the ESC, the '[', the digits, the 'm' — counted as a
+// visible cell. A styled string therefore lost ten to fifteen columns per span
+// it walked past, and the cut could land inside a sequence, leaving an
+// unterminated SGR that bleeds colour across the rest of the screen. It only
+// bit once content actually overflowed, which is to say only in narrow
+// terminals, which is where every caller that passes pre-styled text lives:
+// the pending-link banner, the form rows, and every line of the help screen.
 func truncateCells(s string, max int) string {
 	if max <= 0 {
 		return ""
@@ -755,15 +841,36 @@ func truncateCells(s string, max int) string {
 	if max == 1 {
 		return "…"
 	}
+
 	var b strings.Builder
 	used := 0
+	inEscape := false
 	for _, r := range s {
+		// Escape sequences occupy no cells and must be copied whole: dropping
+		// the terminator is what leaks styling into everything after it.
+		if inEscape {
+			b.WriteRune(r)
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEscape = false
+			}
+			continue
+		}
+		if r == '\x1b' {
+			b.WriteRune(r)
+			inEscape = true
+			continue
+		}
 		rw := lipgloss.Width(string(r))
 		if used+rw > max-1 {
 			break
 		}
 		b.WriteRune(r)
 		used += rw
+	}
+	// Close any style still open at the cut, so the ellipsis and everything
+	// drawn after it are unstyled.
+	if strings.Contains(s, "\x1b[") {
+		b.WriteString("\x1b[0m")
 	}
 	b.WriteString("…")
 	return b.String()

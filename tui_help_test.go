@@ -241,12 +241,12 @@ func TestModes_CtrlCQuitsFromEverywhere(t *testing.T) {
 	fvi := makeVertexInfo("hub/x", nil, nil)
 
 	setups := map[string]func() tuiModel{
-		"browse":  func() tuiModel { return makeModel("hub/x", nil, &fvi) },
-		"help":    func() tuiModel { return update(makeModel("hub/x", nil, &fvi), key("?")) },
-		"query":   func() tuiModel { return update(makeModel("hub/x", nil, &fvi), key("/")) },
-		"search":  func() tuiModel { return update(makeModel("hub/x", nil, &fvi), key("f")) },
-		"export":  func() tuiModel { return update(makeModel("hub/x", nil, &fvi), key("e")) },
-		"form":    func() tuiModel { return update(makeModel("hub/x", nil, &fvi), key("n")) },
+		"browse": func() tuiModel { return makeModel("hub/x", nil, &fvi) },
+		"help":   func() tuiModel { return update(makeModel("hub/x", nil, &fvi), key("?")) },
+		"query":  func() tuiModel { return update(makeModel("hub/x", nil, &fvi), key("/")) },
+		"search": func() tuiModel { return update(makeModel("hub/x", nil, &fvi), key("f")) },
+		"export": func() tuiModel { return update(makeModel("hub/x", nil, &fvi), key("e")) },
+		"form":   func() tuiModel { return update(makeModel("hub/x", nil, &fvi), key("n")) },
 		"results": func() tuiModel {
 			m := makeModel("hub/x", nil, &fvi)
 			m.queryResults = []string{"hub/a"}

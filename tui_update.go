@@ -25,6 +25,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.bodyVP.Width = m.vpWidth()
 			m.bodyVP.Height = m.vpHeight()
+			// The key-value body bakes the width into the string, so it has to
+			// be re-rendered rather than just re-sized.
+			m = m.refreshBody()
+		}
+		if m.form != nil {
+			if ed := m.form.jsonField(); ed != nil {
+				ed.setSize(m.editorSizeFor(len(m.form.contextRows) + 2))
+			}
 		}
 		return m, nil
 
@@ -125,10 +133,21 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.linksTotal = 0
 		m.links = msg.links
 		m.grouped = buildGroupedView(msg.links, m.searchQuery)
-		m.rCursor = 0
-		m.lCursor = 0
-		m.rOffset = 0
-		m.lOffset = 0
+		if m.restore != nil {
+			// Put the user back where they were standing. This never ran: the
+			// snapshot was taken on the post-mutation refresh, but only the
+			// CACHE-HIT handler consulted it — and a refresh deliberately
+			// bypasses the cache. So every edit bounced the cursor to the top
+			// of the list, and the stale snapshot was then applied to whatever
+			// unrelated vertex was next served from cache.
+			m = applyRestore(m, m.restore)
+			m.restore = nil
+		} else {
+			m.rCursor = 0
+			m.lCursor = 0
+			m.rOffset = 0
+			m.lOffset = 0
+		}
 		if msg.partialErr != nil {
 			m.errMsg = msg.partialErr.Error()
 		}
@@ -794,7 +813,11 @@ func (m tuiModel) applyMutationResult(msg mutationResultMsg) (tea.Model, tea.Cmd
 
 	navTo := msg.navTo
 	if m.pendingNavAfterDelete != "" {
-		if msg.res.status != opFailed {
+		// Only an APPLIED delete moves you off the vertex. A no-op delete —
+		// the vertex was already gone — used to walk you away and pop the
+		// history exactly as a real one would, so "nothing happened" and "it
+		// is gone" were indistinguishable from the outside.
+		if msg.res.status == opApplied {
 			navTo = m.pendingNavAfterDelete
 		}
 		m.pendingNavAfterDelete = ""
@@ -808,7 +831,9 @@ func (m tuiModel) applyMutationResult(msg mutationResultMsg) (tea.Model, tea.Cmd
 	}
 	m.errMsg = ""
 
-	if msg.clearLinkIf != "" && m.linking != nil && m.linking.fromID == msg.clearLinkIf {
+	// A pending link is cleared only when its source really did go away.
+	if msg.clearLinkIf != "" && msg.res.status == opApplied &&
+		m.linking != nil && m.linking.fromID == msg.clearLinkIf {
 		m.linking = nil
 	}
 
