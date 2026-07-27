@@ -779,7 +779,7 @@ func (m tuiModel) updateCreateMenu(kMsg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // applyMutationResult folds a completed mutation back into the model: report
-// it, evict what it invalidated, and reload if the view is now stale.
+// it, and reload or move on.
 func (m tuiModel) applyMutationResult(msg mutationResultMsg) (tea.Model, tea.Cmd) {
 	m.form = nil
 	m.queryResult = toastFor(msg)

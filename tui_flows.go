@@ -700,13 +700,11 @@ func openSubTypeForm(m tuiModel) formState {
 }
 
 func submitCreateCmd(f formState) tea.Cmd {
-	// Ids are canonicalised before they go anywhere near the cache. The wire
-	// call still gets the bare name — the server resolves it — but `navTo` and
-	// `invalidate` must name the vertex the way the cache keys it, or the
-	// eviction silently misses and the browser keeps serving the link list it
-	// captured before the write. That is the whole of "I created an object and
-	// there is no link from its type to it": the link existed, the screen was
-	// a snapshot from before it did.
+	// Ids are canonicalised before they enter the model. The wire call still
+	// gets the bare name — the server resolves it — but `navTo` has to name
+	// the vertex the way everything else does, or landing on what was just
+	// created would be a second entry for the same thing in the history and
+	// the cursor file.
 	dom := f.ctx.domain
 	if dom == "" {
 		dom = NatsHubDomain
