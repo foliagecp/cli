@@ -352,6 +352,31 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queryResult = ""
 			return m, textarea.Blink
 
+		case "d", "D":
+			if m.loading {
+				m.queryResult = styleDim.Render("still loading…")
+				return m, nil
+			}
+			// `d` deletes what the cursor is on — a link row means that link;
+			// anything else means the vertex. `D` always means the vertex, for
+			// when the cursor happens to sit on a link.
+			if msg.String() == "d" {
+				if dl, ok := m.cursorLink(); ok {
+					f := openDeleteLinkForm(m, dl)
+					m.form = &f
+					m.queryResult = ""
+					return m, nil
+				}
+			}
+			f, refusal := openDeleteVertexForm(m)
+			if refusal != "" {
+				m.queryResult = styleErr.Render(refusal)
+				return m, nil
+			}
+			m.form = &f
+			m.queryResult = ""
+			return m, nil
+
 		case "x":
 			// Force the low-level API. Session state, shown in the header at
 			// all times so it can never be on by surprise.
@@ -568,6 +593,18 @@ func (m tuiModel) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.form = nil
 		return m, nil
 	case actSubmit:
+		// Deleting the vertex we are standing on must move us somewhere alive.
+		// gWalkTo persists the current id on every successful load, so staying
+		// put would leave a dead id in $FOLIAGE_CLI_DIR/gwalk and the NEXT
+		// launch of `tui` (and `gwalk inspect`) would fail to load at all.
+		// Decided here, before the delete, while the history is still intact.
+		if f.kind == formDeleteVertex && f.ctx.fromID == m.currentID {
+			m.pendingNavAfterDelete = "root"
+			if n := len(m.history); n > 0 {
+				m.pendingNavAfterDelete = m.history[n-1]
+				m.history = m.history[:n-1]
+			}
+		}
 		return m, submitFormCmd(f)
 	case actOpenEditor:
 		if ed := f.editor(); ed != nil {
@@ -594,6 +631,14 @@ func (m tuiModel) applyMutationResult(msg mutationResultMsg) (tea.Model, tea.Cmd
 	m.form = nil
 	m.queryResult = toastFor(msg)
 
+	navTo := msg.navTo
+	if m.pendingNavAfterDelete != "" {
+		if msg.res.status != opFailed {
+			navTo = m.pendingNavAfterDelete
+		}
+		m.pendingNavAfterDelete = ""
+	}
+
 	if msg.res.status == opFailed {
 		// Failures also go to the header, which persists until the next
 		// successful load — a cursor move must not wipe the reason.
@@ -602,17 +647,21 @@ func (m tuiModel) applyMutationResult(msg mutationResultMsg) (tea.Model, tea.Cmd
 	}
 	m.errMsg = ""
 
+	if msg.clearAnchorIf != "" && m.anchor != nil && m.anchor.id == msg.clearAnchorIf {
+		m.anchor = nil
+	}
+
 	if msg.clearAll {
 		m = m.invalidateAll()
 	} else {
 		m = m.invalidate(msg.invalidate...)
 	}
 
-	if msg.navTo != "" {
+	if navTo != "" {
 		m.loadGen++
 		m.loading = true
 		m.linksTotal = 0
-		return m, fetchVertexCmd(msg.navTo, m.loadGen)
+		return m, fetchVertexCmd(navTo, m.loadGen)
 	}
 
 	if msg.refresh {

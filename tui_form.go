@@ -85,6 +85,8 @@ type formKind int
 
 const (
 	formBodyEdit formKind = iota
+	formDeleteVertex
+	formDeleteLink
 )
 
 type formState struct {
@@ -392,13 +394,26 @@ func (f formState) handleConfirmKey(k string) (formState, formAction) {
 		}
 		return f, actNone
 	}
-	if k == "enter" {
+	switch k {
+	case "enter":
 		if f.confirmText == f.confirmWord {
 			f.submitting = true
 			return f, actSubmit
 		}
 		f.err = "type " + f.confirmWord + " exactly to confirm"
 		return f, actNone
+	case "backspace":
+		if n := len(f.confirmText); n > 0 {
+			f.confirmText = f.confirmText[:n-1]
+			f.err = ""
+		}
+		return f, actNone
+	}
+	// Single printable runes build up the typed confirmation. Anything longer
+	// is a chord (ctrl+…, arrows) and is ignored rather than inserted.
+	if len([]rune(k)) == 1 {
+		f.confirmText += k
+		f.err = ""
 	}
 	return f, actNone
 }

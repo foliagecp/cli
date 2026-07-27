@@ -297,6 +297,14 @@ type tuiModel struct {
 	// restore carries view state across a reload; see tui_restore.go.
 	restore *viewRestore
 
+	// pendingNavAfterDelete is where to go once the in-flight delete of the
+	// current vertex succeeds. Decided before the delete, while the history is
+	// still intact.
+	pendingNavAfterDelete string
+
+	// anchor marks a vertex as the source for the next link; see tui_flows.go.
+	anchor *anchorState
+
 	width  int
 	height int
 }
@@ -487,6 +495,23 @@ func cacheHitCmd(id string, gen int, cv cachedVertex) tea.Cmd {
 
 func fetchLinksCmd(id string, gen int, fvi *fullVertexInfo) tea.Cmd {
 	return func() tea.Msg {
+		// Fast path: the vertex read already carried every link's target and
+		// type, so there is nothing left to fetch. This is the difference
+		// between one request and one-per-link — and every mutation triggers a
+		// refresh, so on a type vertex with thousands of instances the fan-out
+		// would dominate. Link bodies and tags are not needed here (the list
+		// view never shows them) and are read lazily when an editor opens.
+		if len(fvi.outFull)+len(fvi.inFull) == len(fvi.outLinks)+len(fvi.inLinks) {
+			links := make([]displayLink, 0, len(fvi.outFull)+len(fvi.inFull))
+			for _, fli := range fvi.outFull {
+				links = append(links, displayLink{info: fli, isOut: true})
+			}
+			for _, fli := range fvi.inFull {
+				links = append(links, displayLink{info: fli, isOut: false})
+			}
+			return linksLoadedMsg{id: id, gen: gen, links: links}
+		}
+
 		type result struct {
 			dl  displayLink
 			err error

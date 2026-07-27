@@ -637,6 +637,8 @@ func (m tuiModel) renderStatus() string {
 	var s string
 	sep := styleHintSep.Render("  ")
 	switch {
+	case m.form != nil && m.form.chrome == chromeStatus:
+		s = m.renderFormStatus()
 	case m.queryMode:
 		s = "Query: " + m.queryInput.View() + styleHintSep.Render("  Esc:cancel")
 	case m.exportMode && !m.exportDepStep:

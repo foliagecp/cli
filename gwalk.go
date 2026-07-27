@@ -38,6 +38,16 @@ type fullVertexInfo struct {
 	body     *easyjson.JSON
 	outLinks []linkId
 	inLinks  []linkId
+
+	// outFull/inFull carry the link target and type harvested from the same
+	// vertex read, so the TUI does not have to issue one read per link just to
+	// learn them. Body and tags are deliberately absent — nothing in the list
+	// view shows them, and they are fetched lazily when an editor opens.
+	//
+	// Empty when the server did not return the structured form; callers must
+	// fall back to reading each link individually.
+	outFull []fullLinkInfo
+	inFull  []fullLinkInfo
 }
 
 const (
@@ -128,7 +138,12 @@ func getVertexFullInfo(vertexId string) (fvi fullVertexInfo, resErr error) {
 	if resErr = initDBClient(); resErr != nil {
 		return
 	}
-	data, err := dbClient.Graph.VertexRead(vertexId, true)
+	// details_v2 returns links.out as [{to,name,type}] instead of three
+	// parallel arrays. That matters for more than tidiness: the legacy form
+	// appends to `names` but can skip `types`/`ids` for a broken target, so the
+	// arrays desync and cannot be zipped safely. The structured form carries
+	// each link's target and type with the link itself.
+	data, err := dbClient.Graph.VertexReadDetailsV2(vertexId)
 	if err != nil {
 		resErr = err
 		return
@@ -136,7 +151,21 @@ func getVertexFullInfo(vertexId string) (fvi fullVertexInfo, resErr error) {
 
 	fvi.body = data.GetByPath("body").GetPtr()
 
-	if arr, ok := data.GetByPath("links.out.names").AsArrayString(); ok {
+	outLinks := data.GetByPath("links.out")
+	if outLinks.IsArray() {
+		for i := 0; i < outLinks.ArraySize(); i++ {
+			ol := outLinks.ArrayElement(i)
+			name := ol.GetByPath("name").AsStringDefault("")
+			fvi.outLinks = append(fvi.outLinks, linkId{vertexId, name})
+			fvi.outFull = append(fvi.outFull, fullLinkInfo{
+				id: linkId{vertexId, name},
+				to: ol.GetByPath("to").AsStringDefault(""),
+				tp: ol.GetByPath("type").AsStringDefault(""),
+			})
+		}
+	} else if arr, ok := data.GetByPath("links.out.names").AsArrayString(); ok {
+		// Older runtime that ignored details_v2: names only, so the targets
+		// and types still have to be read one link at a time.
 		for _, oln := range arr {
 			fvi.outLinks = append(fvi.outLinks, linkId{vertexId, oln})
 		}
@@ -148,6 +177,11 @@ func getVertexFullInfo(vertexId string) (fvi fullVertexInfo, resErr error) {
 		from := inLink.GetByPath("from").AsStringDefault("")
 		linkName := inLink.GetByPath("name").AsStringDefault("")
 		fvi.inLinks = append(fvi.inLinks, linkId{from, linkName})
+		fvi.inFull = append(fvi.inFull, fullLinkInfo{
+			id: linkId{from, linkName},
+			to: vertexId,
+			tp: inLink.GetByPath("type").AsStringDefault(""),
+		})
 	}
 
 	return
