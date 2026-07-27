@@ -170,7 +170,12 @@ func makeModelWithBody(t *testing.T, id, body string) tuiModel {
 		t.Fatalf("bad fixture body: %s", body)
 	}
 	fvi := fullVertexInfo{id: id, body: j.GetPtr()}
-	return makeModel(id, nil, &fvi)
+	m := makeModel(id, nil, &fvi)
+	// A vertex with no links is a PLAIN vertex, and the high-level API has
+	// nothing to say about one — so these fixtures arm the low-level API,
+	// which is the only one that can edit them.
+	m.llMode = true
+	return m
 }
 
 func TestForm_EscClosesAndCtrlSSubmits(t *testing.T) {
@@ -347,8 +352,11 @@ func TestBodyEdit_SubmitsToTheRightAPI(t *testing.T) {
 			wantAPI: "object",
 		},
 		{
+			// A plain vertex has no high-level form at all, so reaching it
+			// requires the low-level API to be armed.
 			name:    "plain vertex uses the raw graph API",
 			links:   nil,
+			llMode:  true,
 			wantAPI: "vertex",
 		},
 		{

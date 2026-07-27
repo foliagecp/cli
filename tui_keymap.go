@@ -69,14 +69,12 @@ var keymap = []binding{
 	{keys: "L", desc: "start a link here · press again at the target to commit", mode: modeBrowse, group: "Create", hint: "L:link", prio: 3},
 	{keys: "esc", desc: "cancel a pending link", mode: modeBrowse, group: "Create"},
 
-	{keys: "i", desc: "edit what the cursor is on — the selected link, or the vertex", mode: modeBrowse, group: "Modify", hint: "i:edit", prio: 2},
-	{keys: "I", desc: "always the current vertex's body", mode: modeBrowse, group: "Modify"},
+	{keys: "i", desc: "edit the subject — the vertex on the centre column, the selected link in a side one", mode: modeBrowse, group: "Modify", hint: "i:edit", prio: 2},
 	{keys: "t", desc: "edit the selected link, starting on its tags", mode: modeBrowse, group: "Modify"},
-	{keys: "x", desc: "switch the CRUD API between high-level and low-level", mode: modeBrowse, group: "Modify", hint: "x:api", prio: 6},
+	{keys: "x", desc: "switch the CRUD API: high-level knows types and objects, low-level knows vertices and links", mode: modeBrowse, group: "Modify", hint: "x:api", prio: 6},
 	{keys: "y", desc: "yank the body on screen, to paste with ctrl+t", mode: modeBrowse, group: "Modify"},
 
-	{keys: "d", desc: "delete what the cursor is on — the selected link, or the vertex", mode: modeBrowse, group: "Delete", hint: "d:del", prio: 2},
-	{keys: "D", desc: "always the current vertex", mode: modeBrowse, group: "Delete"},
+	{keys: "d", desc: "delete the subject, whichever column it is in", mode: modeBrowse, group: "Delete", hint: "d:del", prio: 2},
 
 	// ── Forms and the body editor ─────────────────────────────────────────
 	{keys: "ctrl+s", desc: "apply / submit from any field", mode: modeForm, group: "Editing"},

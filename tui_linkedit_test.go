@@ -18,6 +18,9 @@ func linkWithDetail(t *testing.T, dl displayLink, tags []string, body easyjson.J
 	m := makeModel("hub/a", []displayLink{dl}, nil)
 	m.focus = panelOut
 	m.rCursor = 1 // 0 is the group header
+	// These fixtures use a raw link between plain vertices, which the
+	// high-level API cannot address at all — so the low-level one is armed.
+	m.llMode = true
 	m = m.applyLinkDetail(linkDetailMsg{
 		key:    keyOf(dl),
 		detail: linkDetail{loaded: true, tags: tags, body: body},
@@ -45,8 +48,8 @@ func TestSubject_IsTheLinkUnderTheCursorAndTheVertexOtherwise(t *testing.T) {
 	}
 	m.focus = panelOut
 	m.rCursor = 0 // group header — nothing link-shaped is selected
-	if got := m.subject().kind; got != subjVertex {
-		t.Error("a group header is not an entity; the subject falls back to the vertex")
+	if got := m.subject().kind; got != subjNone {
+		t.Error("a group header is not an entity, and a side column cannot reach the vertex")
 	}
 	m.rCursor = 1
 	if got := m.subject().kind; got != subjLink {
@@ -90,26 +93,20 @@ func TestLinkEdit_IOnALinkRowEditsTheLink(t *testing.T) {
 	}
 }
 
-func TestLinkEdit_IOffALinkRowEditsTheVertex(t *testing.T) {
+func TestLinkEdit_TheVertexIsReachedByMovingToTheCentreColumn(t *testing.T) {
 	fvi := makeVertexInfo("hub/a", nil, nil)
 	m := linkWithDetail(t, rawLink(), nil, easyjson.NewJSONObject())
 	m.fvi = &fvi
-	m.rCursor = 0 // the group header
 
+	// From the link panel, i edits the link.
+	if got := update(m, key("i")); got.form == nil || got.form.kind != formLinkEdit {
+		t.Fatalf("i over a link should edit the link, got %v", got.form)
+	}
+	// One press to the centre column, and the same key edits the vertex.
+	m = update(m, key("h"))
 	m = update(m, key("i"))
 	if m.form == nil || m.form.kind != formBodyEdit {
-		t.Fatalf("i off a link row should edit the vertex, got %v", m.form)
-	}
-}
-
-func TestLinkEdit_ShiftIAlwaysMeansTheVertex(t *testing.T) {
-	fvi := makeVertexInfo("hub/a", nil, nil)
-	m := linkWithDetail(t, rawLink(), nil, easyjson.NewJSONObject())
-	m.fvi = &fvi
-
-	m = update(m, key("I"))
-	if m.form == nil || m.form.kind != formBodyEdit {
-		t.Fatal("I is the escape hatch: it must reach the vertex even over a link")
+		t.Fatalf("from the centre column i should edit the vertex, got %v", m.form)
 	}
 }
 
@@ -354,6 +351,7 @@ func TestDeleteLink_OrdinaryEdgeStaysASingleKeyConfirmation(t *testing.T) {
 	})
 
 	m := makeModel("hub/a", []displayLink{rawLink()}, nil)
+	m = update(m, key("x")) // a raw link is a low-level entity
 	m.focus = panelOut
 	m.rCursor = 1
 
@@ -506,9 +504,10 @@ func TestTemplate_YankThenPaste(t *testing.T) {
 
 	fvi := makeVertexInfo("hub/a", nil, nil)
 	m.fvi = &fvi
-	m = update(m, key("I")) // edit the vertex body
+	m = update(m, key("h")) // to the centre column
+	m = update(m, key("i")) // edit the vertex body
 	if m.form == nil {
-		t.Fatal("I should open the body editor")
+		t.Fatal("i on the centre column should open the body editor")
 	}
 	if strings.Contains(m.form.jsonField().ta.Value(), "weight") {
 		t.Fatal("fixture: the vertex body should not already contain the yank")

@@ -25,7 +25,14 @@ import (
 type subjectKind int
 
 const (
-	subjVertex subjectKind = iota
+	// subjNone is a link panel with nothing link-shaped under the cursor — an
+	// empty panel, or a group header. There is deliberately NO fallback to the
+	// vertex: the vertex lives in the centre column, and letting a side column
+	// act on it would undo the whole point of putting the centre in the focus
+	// cycle. Standing in the outgoing panel and editing the vertex is exactly
+	// the confusion the columns exist to remove.
+	subjNone subjectKind = iota
+	subjVertex
 	subjLink
 )
 
@@ -45,7 +52,16 @@ func (m tuiModel) subject() subject {
 	if dl, ok := m.cursorLink(); ok {
 		return subject{kind: subjLink, link: dl}
 	}
-	return subject{kind: subjVertex}
+	return subject{kind: subjNone}
+}
+
+// noSubjectHint says what to do about it. A group header is a row you can act
+// on with Tab, just not with the subject keys.
+func (m tuiModel) noSubjectHint() string {
+	if _, onHeader := m.cursorGroup(); onHeader {
+		return "a type group is not an entity — pick a link, or h/l to the centre column for the vertex"
+	}
+	return "no links here — h/l to the centre column for the vertex"
 }
 
 // subjectLabel names the subject for a form title or a toast.

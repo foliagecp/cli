@@ -94,13 +94,24 @@ func TestFocus_TheCentreColumnShowsItHasFocus(t *testing.T) {
 	}
 }
 
-func TestFocus_AnEmptyLinkPanelFallsBackToTheVertex(t *testing.T) {
+func TestFocus_AnEmptyLinkPanelHasNoSubjectAtAll(t *testing.T) {
+	// Not a fallback to the vertex. The vertex lives in the centre column, and
+	// letting a side column reach it would undo the whole point of putting the
+	// centre in the cycle — you could stand in the outgoing panel, never touch
+	// the cursor, press i, and be editing the vertex.
 	fvi := makeVertexInfo("hub/x", nil, nil)
 	m := makeModel("hub/x", threeLinks(), &fvi) // out-links only
 	m = update(m, key("h"))                     // the empty incoming column
 
-	if m.subject().kind != subjVertex {
-		t.Error("with no link to be the subject it falls back to the vertex")
+	if m.subject().kind != subjNone {
+		t.Error("an empty link panel has no subject")
+	}
+	m = update(m, key("i"))
+	if m.form != nil {
+		t.Error("i from a side column must not reach the vertex")
+	}
+	if !strings.Contains(stripANSI(m.queryResult), "centre column") {
+		t.Errorf("the refusal should point at the centre column, got %q", stripANSI(m.queryResult))
 	}
 }
 
@@ -253,14 +264,14 @@ func TestDelete_NamesWhatItIsAboutToRemove(t *testing.T) {
 		{info: makeLinkInfo(hubID("types"), "srv", "hub/srv", ltInstanceOf), isOut: false},
 	}
 	m := makeModel("hub/srv", typeLinks, nil)
-	m = update(m, key("D"))
+	m = update(m, key("d"))
 	if m.form == nil || !strings.Contains(m.form.title, "TYPE") {
 		t.Fatalf("high-level delete should say TYPE, got %q", formTitle(m))
 	}
 
 	m2 := makeModel("hub/srv", typeLinks, nil)
 	m2 = update(m2, key("x")) // low-level
-	m2 = update(m2, key("D"))
+	m2 = update(m2, key("d"))
 	if m2.form == nil || !strings.Contains(m2.form.title, "LOW-LEVEL") {
 		t.Errorf("low-level delete must say so — it leaves the CMDB record behind, got %q", formTitle(m2))
 	}
@@ -271,7 +282,7 @@ func TestDelete_ObjectSaysObject(t *testing.T) {
 		{info: makeLinkInfo("hub/srv-1", instanceOfLinkName, "hub/srv", ltInstanceOf), isOut: true},
 	}
 	m := makeModel("hub/srv-1", links, nil)
-	m = update(m, key("D"))
+	m = update(m, key("d"))
 	if m.form == nil || !strings.Contains(m.form.title, "OBJECT") {
 		t.Errorf("deleting an object should say so, got %q", formTitle(m))
 	}
@@ -401,5 +412,93 @@ func TestFocus_NarrowLayoutShowsTheSubjectAboveTheLists(t *testing.T) {
 	}
 	if !strings.Contains(out, "l1") {
 		t.Errorf("the link list should still be there:\n%s", out)
+	}
+}
+
+// ── The armed API governs what the CRUD keys can touch ────────────────────────
+
+// TestCrud_HighLevelRefusesAPlainVertex. `i` on a plain vertex used to fall
+// through to ops.vertexUpdate — a LOW-LEVEL write issued while the status bar
+// said CRUD: high-level. The chip exists to end exactly that guessing, and
+// instead it was describing something that was not happening.
+func TestCrud_HighLevelRefusesAPlainVertex(t *testing.T) {
+	withOps(t, graphOps{}) // any call panics
+
+	fvi := makeVertexInfo("hub/x", nil, nil)
+	m := makeModel("hub/x", nil, &fvi)
+
+	m = update(m, key("i"))
+	if m.form != nil {
+		t.Fatal("the high-level API has nothing to edit on a plain vertex")
+	}
+	if !strings.Contains(stripANSI(m.queryResult), "press x") {
+		t.Errorf("a refusal must name the key that makes it possible, got %q", stripANSI(m.queryResult))
+	}
+
+	m = update(m, key("x"))
+	m = update(m, key("i"))
+	if m.form == nil {
+		t.Error("with the low-level API armed a plain vertex is exactly what can be edited")
+	}
+}
+
+func TestCrud_HighLevelRefusesARawLink(t *testing.T) {
+	withOps(t, graphOps{})
+
+	m := makeModel("hub/a", []displayLink{rawLink()}, nil)
+	m.focus = panelOut
+	m.rCursor = 1
+	m = m.applyLinkDetail(linkDetailMsg{
+		key:    keyOf(rawLink()),
+		detail: linkDetail{loaded: true, body: easyjson.NewJSONObject()},
+	})
+
+	m = update(m, key("i"))
+	if m.form != nil {
+		t.Fatal("a raw link has no high-level form")
+	}
+	if !strings.Contains(stripANSI(m.queryResult), "press x") {
+		t.Errorf("the refusal should name the switch, got %q", stripANSI(m.queryResult))
+	}
+}
+
+func TestCrud_HighLevelStillEditsTypesAndObjects(t *testing.T) {
+	body := easyjson.NewJSONObject()
+	for _, c := range []struct {
+		name  string
+		id    string
+		links []displayLink
+	}{
+		{"type", "hub/srv", []displayLink{
+			{info: makeLinkInfo(hubID("types"), "srv", "hub/srv", ltInstanceOf), isOut: false},
+		}},
+		{"object", "hub/srv-1", []displayLink{
+			{info: makeLinkInfo("hub/srv-1", instanceOfLinkName, "hub/srv", ltInstanceOf), isOut: true},
+		}},
+	} {
+		fvi := fullVertexInfo{id: c.id, body: body.GetPtr()}
+		m := makeModel(c.id, c.links, &fvi)
+		m = update(m, key("i"))
+		if m.form == nil {
+			t.Errorf("%s: the high-level API should edit this", c.name)
+		}
+	}
+}
+
+func TestCrud_ABrokenObjectPointsAtTheRepairPath(t *testing.T) {
+	// The one case where the low-level API earns its keep: the high-level one
+	// will refuse this vertex too, and repairing it is what the raw one is for.
+	fvi := makeVertexInfo("hub/srv-1", nil, nil)
+	m := makeModel("hub/srv-1", []displayLink{
+		{info: makeLinkInfo(hubID("objects"), "hub/srv-1", "hub/srv-1", ltInstance), isOut: false},
+	}, &fvi)
+
+	m = update(m, key("i"))
+	if m.form != nil {
+		t.Fatal("a broken object cannot be addressed by the high-level API")
+	}
+	out := stripANSI(m.queryResult)
+	if !strings.Contains(out, "broken") || !strings.Contains(out, "press x") {
+		t.Errorf("the refusal should name the problem and the way out, got %q", out)
 	}
 }

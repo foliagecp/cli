@@ -24,6 +24,7 @@ func objectVertexLinks() []displayLink {
 
 func TestDelete_DOnLinkRowTargetsTheLink(t *testing.T) {
 	m := makeModel("root", threeLinks(), nil)
+	m = update(m, key("x")) // a raw link needs the low-level API
 	m.focus = panelOut
 	m.rCursor = 1 // first link row, below the group header
 
@@ -40,27 +41,32 @@ func TestDelete_DOnLinkRowTargetsTheLink(t *testing.T) {
 	}
 }
 
-func TestDelete_DOnGroupHeaderTargetsTheVertex(t *testing.T) {
+// TestDelete_ASideColumnNeverReachesTheVertex. Standing in the outgoing panel
+// on a group header, `d` used to fall back to deleting the VERTEX — which
+// undoes the whole point of putting the centre column in the focus cycle.
+func TestDelete_ASideColumnNeverReachesTheVertex(t *testing.T) {
+	withOps(t, graphOps{}) // any call panics
 	m := makeModel("hub/x", threeLinks(), nil)
 	m.focus = panelOut
 	m.rCursor = 0 // the group header, not a link
 
 	m = update(m, key("d"))
 
-	if m.form == nil || m.form.kind != formDeleteVertex {
-		t.Fatalf("d off a link row should target the vertex, got %+v", m.form)
+	if m.form != nil {
+		t.Fatalf("a side column must not act on the vertex, got %+v", m.form)
+	}
+	if !strings.Contains(stripANSI(m.queryResult), "centre column") {
+		t.Errorf("the refusal should point at the centre column, got %q", stripANSI(m.queryResult))
 	}
 }
 
-func TestDelete_ShiftDAlwaysTargetsTheVertex(t *testing.T) {
-	m := makeModel("hub/x", threeLinks(), nil)
-	m.focus = panelOut
-	m.rCursor = 1 // sitting on a link
+func TestDelete_FromTheCentreColumnTargetsTheVertex(t *testing.T) {
+	m := makeModel("hub/srv-1", objectVertexLinks(), nil) // focus starts on the centre
 
-	m = update(m, key("D"))
+	m = update(m, key("d"))
 
 	if m.form == nil || m.form.kind != formDeleteVertex {
-		t.Fatalf("D should target the vertex even from a link row, got %+v", m.form)
+		t.Fatalf("the centre column is where the vertex lives, got %+v", m.form)
 	}
 }
 
@@ -68,7 +74,7 @@ func TestDelete_ShiftDAlwaysTargetsTheVertex(t *testing.T) {
 
 func TestDelete_BuiltInIsRefusedWithoutAForm(t *testing.T) {
 	m := makeModel("hub/types", nil, nil)
-	m = update(m, key("D"))
+	m = update(m, key("d"))
 
 	if m.form != nil {
 		t.Error("a built-in vertex must not even open a confirmation")
@@ -85,7 +91,7 @@ func TestDelete_OrdinaryTierConfirmsWithY(t *testing.T) {
 	})
 
 	m := makeModel("hub/srv-1", objectVertexLinks(), nil)
-	m = update(m, key("D"))
+	m = update(m, key("d"))
 	if m.form == nil || m.form.confirmWord != "" {
 		t.Fatal("an object delete should be a single-key confirmation")
 	}
@@ -103,7 +109,7 @@ func TestDelete_OrdinaryTierConfirmsWithY(t *testing.T) {
 func TestDelete_OrdinaryTierCancelsWithN(t *testing.T) {
 	withOps(t, graphOps{}) // any call panics
 	m := makeModel("hub/srv-1", objectVertexLinks(), nil)
-	m = update(m, key("D"))
+	m = update(m, key("d"))
 	m = update(m, key("n"))
 
 	if m.form != nil {
@@ -118,9 +124,9 @@ func TestDelete_TypeTierRequiresTheNameTyped(t *testing.T) {
 	})
 
 	m := makeModel("hub/srv", typeVertexLinks(), nil)
-	m = update(m, key("D"))
+	m = update(m, key("d"))
 	if m.form == nil {
-		t.Fatal("D should open a confirmation")
+		t.Fatal("d should open a confirmation")
 	}
 	if m.form.confirmWord != "srv" {
 		t.Fatalf("confirmWord = %q, want the bare type name", m.form.confirmWord)
@@ -151,7 +157,7 @@ func TestDelete_TypeTierRequiresTheNameTyped(t *testing.T) {
 
 	// The right name goes through.
 	m = makeModel("hub/srv", typeVertexLinks(), nil)
-	m = update(m, key("D"))
+	m = update(m, key("d"))
 	for _, r := range "srv" {
 		m = update(m, key(string(r)))
 	}
@@ -169,7 +175,7 @@ func TestDelete_TypeClearsTheWholeCache(t *testing.T) {
 
 	m := makeModel("hub/srv", typeVertexLinks(), nil)
 	m.cache["hub/unrelated"] = cachedVertex{}
-	m = update(m, key("D"))
+	m = update(m, key("d"))
 	for _, r := range "srv" {
 		m = update(m, key(string(r)))
 	}
@@ -193,7 +199,8 @@ func TestDelete_VertexInvalidatesNeighbours(t *testing.T) {
 	})
 
 	m := makeModel("hub/x", threeLinks(), nil)
-	m = update(m, key("D"))
+	m = update(m, key("x")) // a plain vertex is a low-level entity
+	m = update(m, key("d"))
 	_, cmd := updateCmd(m, key("y"))
 	msg := runCmd(cmd).(mutationResultMsg)
 
@@ -215,7 +222,8 @@ func TestDelete_NavigatesAwayFromTheDeletedVertex(t *testing.T) {
 	m := makeModel("hub/x", nil, nil)
 	m.history = []string{"hub/parent"}
 
-	m = update(m, key("D"))
+	m = update(m, key("x"))
+	m = update(m, key("d"))
 	m, cmd := updateCmd(m, key("y"))
 	if m.pendingNavAfterDelete != "hub/parent" {
 		t.Fatalf("pendingNavAfterDelete = %q, want the history entry", m.pendingNavAfterDelete)
@@ -241,7 +249,8 @@ func TestDelete_FallsBackToRootWithNoHistory(t *testing.T) {
 	m := makeModel("hub/x", nil, nil)
 	m.history = nil
 
-	m = update(m, key("D"))
+	m = update(m, key("x"))
+	m = update(m, key("d"))
 	m, _ = updateCmd(m, key("y"))
 
 	if m.pendingNavAfterDelete != hubID("root") {
@@ -256,7 +265,8 @@ func TestDelete_FailureStaysPut(t *testing.T) {
 
 	m := makeModel("hub/x", nil, nil)
 	m.history = []string{"hub/parent"}
-	m = update(m, key("D"))
+	m = update(m, key("x"))
+	m = update(m, key("d"))
 	m, cmd := updateCmd(m, key("y"))
 	next, _ := m.Update(runCmd(cmd))
 	m = next.(tuiModel)
@@ -277,7 +287,8 @@ func TestDelete_ClearsAnAnchorOnTheDeletedVertex(t *testing.T) {
 	m := makeModel("hub/x", nil, nil)
 	m.linking = &pendingLink{fromID: "hub/x"}
 
-	m = update(m, key("D"))
+	m = update(m, key("x"))
+	m = update(m, key("d"))
 	m, cmd := updateCmd(m, key("y"))
 	next, _ := m.Update(runCmd(cmd))
 	m = next.(tuiModel)
@@ -299,6 +310,7 @@ func TestDelete_LinkUsesTheOwningVertex(t *testing.T) {
 	})
 
 	m := makeModel("root", mixedLinks(), nil)
+	m = update(m, key("x")) // a raw link is a low-level entity
 	m.focus = panelIn
 	m.lCursor = 1 // the incoming link from hub/parent
 
@@ -320,7 +332,7 @@ func TestDelete_LinkUsesTheOwningVertex(t *testing.T) {
 func TestDelete_RefusedWhileLoading(t *testing.T) {
 	m := makeModel("hub/x", nil, nil)
 	m.loading = true
-	m = update(m, key("D"))
+	m = update(m, key("d"))
 	if m.form != nil {
 		t.Error("a delete must not be staged against a vertex that is still loading")
 	}
@@ -328,7 +340,7 @@ func TestDelete_RefusedWhileLoading(t *testing.T) {
 
 func TestDelete_ConfirmationRendersInTheStatusBar(t *testing.T) {
 	m := makeModel("hub/srv-1", objectVertexLinks(), nil)
-	m = update(m, key("D"))
+	m = update(m, key("d"))
 
 	out := m.renderStatus()
 	if !strings.Contains(out, "hub/srv-1") {
@@ -342,7 +354,7 @@ func TestDelete_ConfirmationRendersInTheStatusBar(t *testing.T) {
 func TestDelete_EscapeClosesWithoutCalling(t *testing.T) {
 	withOps(t, graphOps{}) // any call panics
 	m := makeModel("hub/srv-1", objectVertexLinks(), nil)
-	m = update(m, key("D"))
+	m = update(m, key("d"))
 	m = update(m, keyEsc())
 	if m.form != nil {
 		t.Error("esc should close the confirmation")
@@ -360,7 +372,7 @@ func TestDelete_LowLevelModeUsesTheRawAPI(t *testing.T) {
 
 	m := makeModel("hub/srv", typeVertexLinks(), nil)
 	m.llMode = true
-	m = update(m, key("D"))
+	m = update(m, key("d"))
 	if m.form.confirmWord != "" {
 		t.Error("a raw vertex delete should not demand a typed name")
 	}

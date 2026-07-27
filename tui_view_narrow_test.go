@@ -138,10 +138,11 @@ func TestNarrow_BodyEditorStillOwnsTheScreen(t *testing.T) {
 	body.SetByPath("k", easyjson.NewJSON("v"))
 	fvi := fullVertexInfo{id: "hub/x", body: body.GetPtr()}
 	m := narrow(makeModel("hub/x", nil, &fvi))
-	m = update(m, key("I"))
+	m.llMode = true // hub/x is a plain vertex
+	m = update(m, key("i"))
 
 	if m.form == nil || m.form.chrome != chromeFull {
-		t.Fatal("I should open the full-screen editor")
+		t.Fatal("i should open the full-screen editor")
 	}
 	if !strings.Contains(stripANSI(m.View()), "\"k\"") {
 		t.Error("the editor should render its content at 60 columns")

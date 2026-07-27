@@ -356,3 +356,51 @@ func (t linkTier) title() string {
 		return "New raw link (low level)"
 	}
 }
+
+// ── What the armed CRUD API can act on ────────────────────────────────────────
+
+// The status bar states which API the CRUD keys use, so the keys have to obey
+// it. They did not: a plain vertex edited in high-level mode fell through to
+// ops.vertexUpdate — a low-level write issued while the screen said
+// "CRUD: high-level". The chip was there to end exactly that kind of guessing,
+// and instead it was describing something that was not happening.
+//
+// A refusal names the key that makes the operation possible. Telling the user
+// "no" without telling them the way to "yes" is how a mode becomes a wall.
+
+const switchHint = " — press x to switch the CRUD API"
+
+// crudRefusesVertex explains why the armed API cannot act on this vertex, or
+// returns "" when it can.
+func crudRefusesVertex(llMode bool, k vertexKind, id string) string {
+	if llMode {
+		// Everything is a vertex at the low level, including a type.
+		return ""
+	}
+	switch k {
+	case vkType, vkObject:
+		return ""
+	case vkBrokenObject:
+		// The one case where low-level mode earns its keep: the high-level API
+		// will refuse this vertex too, and repairing it is what the raw one is
+		// for.
+		return stripDomain(id) + " is an object with a broken instance-of link — " +
+			"the high-level API cannot address it" + switchHint
+	case vkStructural:
+		return stripDomain(id) + " is part of the CMDB topology, not a type or an object" + switchHint
+	default:
+		return stripDomain(id) + " is a plain vertex — the high-level API only knows " +
+			"types and objects" + switchHint
+	}
+}
+
+// crudRefusesLink is the same question for an edge. In high-level mode only
+// edges the CMDB owns are addressable; a raw link between two plain vertices
+// has no high-level form at all.
+func crudRefusesLink(llMode bool, t linkTier) string {
+	if llMode || t != tierRawLink {
+		return ""
+	}
+	return "this is a raw link — the high-level API only knows links between " +
+		"types and between objects" + switchHint
+}

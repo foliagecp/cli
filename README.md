@@ -66,11 +66,15 @@ Every action applies to the subject:
 | `i` | edit the subject |
 | `d` | delete the subject |
 | `y` | yank the subject's body, to paste with `ctrl+t` |
-| `I` / `D` | the same, but always the vertex — the escape hatch when the cursor is on a link |
 
-One rule, instead of the four this replaced. It is also why editing a link is
-not a binding you have to be told about: you can see the link, so pressing the
-edit key over it is the obvious move.
+One rule, instead of the four this replaced. There is deliberately no key for
+"the vertex regardless of where I am standing": the column is the selector, and
+a second way to say it would be a second answer to the question the columns
+exist to answer. In a side column with no link under the cursor there is simply
+no subject, and the keys say so rather than quietly acting on the vertex.
+
+It is also why editing a link is not a binding you have to be told about: you
+can see the link, so pressing the edit key over it is the obvious move.
 
 **Navigate and view**
 
@@ -107,9 +111,22 @@ highlighted straight away, because there the claim is true.
 
 **The CRUD API is always stated** at the left of the status bar: `CRUD:
 high-level` or `CRUD: low-level`, switched with `x`. It governs create, edit
-and delete — not navigation, which always walks raw edges. Confirmations name
-what they are about to remove (`DELETE TYPE srv`, `Delete OBJECT srv-1`,
-`Delete VERTEX srv with the LOW-LEVEL API`), because the same vertex is very
+and delete — not navigation, which always walks raw edges.
+
+It governs them strictly. The high-level API knows types, objects, types-links
+and objects-links; the low-level one knows raw vertices and raw links. An
+operation with no meaning under the armed API is refused, and the refusal names
+the key that makes it possible:
+
+```
+x is a plain vertex — the high-level API only knows types and objects
+                                       — press x to switch the CRUD API
+```
+
+The create menu obeys the same rule, so `type` is unavailable in low-level mode
+and `raw vertex` in high-level mode, each saying why. And confirmations name
+what they are about to remove — `DELETE TYPE srv`, `Delete OBJECT srv-1`,
+`Delete VERTEX srv with the LOW-LEVEL API` — because the same vertex is very
 different amounts of graph through the two APIs.
 
 The header badge names what you are standing on — `[type]`, `[object of srv]`,

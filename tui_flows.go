@@ -161,6 +161,9 @@ func openDeleteVertexForm(m tuiModel) (formState, string) {
 	}
 
 	kind, typeName := m.vertexKind()
+	if refusal := crudRefusesVertex(m.llMode, kind, id); refusal != "" {
+		return formState{}, "✗ " + refusal
+	}
 	entity := entityForVertex(kind, m.llMode)
 
 	// Neighbours are captured NOW: after the delete lands, m.links may already
@@ -563,6 +566,20 @@ func createMenuFor(m tuiModel) []menuEntry {
 
 	var out []menuEntry
 
+	// High-level entities need the high-level API. A create menu that offered
+	// "type" while the status bar said CRUD: low-level would be describing an
+	// operation that is not the one about to run.
+	if m.llMode {
+		return []menuEntry{
+			{key: "l", label: linkLabel, kind: formLinkCreate},
+			{key: "v", label: "raw vertex — linked from " + bare, kind: formVertexCreate},
+			{key: "t", label: "type", why: "types are a high-level entity" + switchHint,
+				kind: formTypeCreate},
+			{key: "o", label: "object", why: "objects are a high-level entity" + switchHint,
+				kind: formObjectCreate},
+		}
+	}
+
 	// Types live under the types root.
 	if bare == "types" {
 		out = append(out, menuEntry{key: "t", label: "type", kind: formTypeCreate})
@@ -599,11 +616,14 @@ func createMenuFor(m tuiModel) []menuEntry {
 	// Links live on their endpoints, so they can always be started.
 	out = append(out, menuEntry{key: "l", label: linkLabel, kind: formLinkCreate})
 
-	// A raw vertex has no home of its own, which is exactly why it must be
-	// attached to the vertex it is created from — otherwise nothing in the
-	// graph points at it and the browser can never reach it again.
+	// A raw vertex is a low-level entity, so it needs the low-level API — the
+	// same rule that stops a type being created in low-level mode, applied in
+	// the other direction. When it IS available it must be attached to the
+	// vertex it is created from, otherwise nothing in the graph points at it
+	// and the browser can never reach it again.
 	out = append(out, menuEntry{
-		key: "v", label: "raw vertex — linked from " + bare + " (low level)",
+		key: "v", label: "raw vertex",
+		why:  "a raw vertex is a low-level entity" + switchHint,
 		kind: formVertexCreate,
 	})
 

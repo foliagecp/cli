@@ -341,16 +341,42 @@ func TestCreateMenu_LinkIsAlwaysAvailable(t *testing.T) {
 	}
 }
 
-func TestCreateMenu_RawVertexSaysItWillBeLinked(t *testing.T) {
-	m := makeModel("hub/a", nil, nil)
-	out := ""
+func TestCreateMenu_RawVertexNeedsTheLowLevelAPI(t *testing.T) {
+	// A raw vertex is a low-level entity. Offering it while the status bar
+	// says CRUD: high-level would describe an operation other than the one
+	// about to run — the same rule that stops a type being created in
+	// low-level mode, applied the other way.
+	m := makeModel("hub/x", nil, nil)
 	for _, e := range createMenuFor(m) {
-		if e.key == "v" {
-			out = e.label
+		if e.key == "v" && e.available() {
+			t.Error("a raw vertex must not be offered while the high-level API is armed")
 		}
 	}
-	if !strings.Contains(out, "linked from a") {
-		t.Errorf("the raw-vertex entry must state that it will be attached, got %q", out)
+	m = update(m, key("x"))
+	found := false
+	for _, e := range createMenuFor(m) {
+		if e.key == "v" {
+			found = true
+			if !e.available() {
+				t.Error("with the low-level API armed a raw vertex is exactly what can be created")
+			}
+			if !strings.Contains(e.label, "linked from") {
+				t.Errorf("the entry must state that it will be attached, got %q", e.label)
+			}
+		}
+	}
+	if !found {
+		t.Error("the low-level menu should offer a raw vertex")
+	}
+}
+
+func TestCreateMenu_HighLevelEntitiesNeedTheHighLevelAPI(t *testing.T) {
+	m := makeModel(hubID("types"), nil, nil)
+	m = update(m, key("x")) // low-level
+	for _, e := range createMenuFor(m) {
+		if (e.key == "t" || e.key == "o") && e.available() {
+			t.Errorf("%q must not be offered while the low-level API is armed", e.label)
+		}
 	}
 }
 
@@ -496,6 +522,7 @@ func TestVertexCreate_AlwaysLinksItSoItStaysReachable(t *testing.T) {
 	})
 
 	m := makeModel("hub/parent", nil, nil)
+	m = update(m, key("x")) // a raw vertex is a low-level entity
 	m = update(m, key("n"))
 	m = update(m, key("v"))
 	if m.form == nil {
@@ -542,6 +569,7 @@ func TestVertexCreate_ReportsAFailedLinkAsAFailure(t *testing.T) {
 	})
 
 	m := makeModel("hub/parent", nil, nil)
+	m = update(m, key("x")) // a raw vertex is a low-level entity
 	m = update(m, key("n"))
 	m = update(m, key("v"))
 	m = focusField(m, "id")

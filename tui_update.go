@@ -353,22 +353,19 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "i", "I":
-			// Edit the SUBJECT — the selected link, or the vertex when the
-			// cursor is not on one. `I` is the escape hatch that always means
-			// the vertex, mirroring how `d`/`D` already work. Refused while a
-			// load is in
+		case "i":
+			// Edit the SUBJECT — the vertex on the centre column, the selected
+			// link in a side one. There is no key that means "the vertex
+			// regardless": the column IS the selector, and a second way to say
+			// it would be a second answer to the question the columns exist to
+			// answer. Refused while a load is in
 			// flight: the form snapshots the body at open time, and there is
 			// no point snapshotting one that is about to be replaced.
 			if m.loading {
 				m.queryResult = styleDim.Render("still loading…")
 				return m, nil
 			}
-			subj := m.subject()
-			if msg.String() == "I" {
-				subj = subject{kind: subjVertex}
-			}
-			return m.openSubjectEditor(subj, "body")
+			return m.openSubjectEditor(m.subject(), "body")
 
 		case "L":
 			if m.loading {
@@ -415,13 +412,17 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			subj := m.subject()
 			if subj.kind != subjLink {
-				m.queryResult = styleDim.Render("put the cursor on a link to edit its tags")
+				m.queryResult = styleDim.Render("tags belong to links — pick one in a side column")
 				return m, nil
 			}
 			return m.openSubjectEditor(subj, "tags")
 
 		case "y":
 			subj := m.subject()
+			if subj.kind == subjNone {
+				m.queryResult = styleDim.Render(m.noSubjectHint())
+				return m, nil
+			}
 			body, ok := m.bodyOfSubject(subj)
 			if !ok {
 				m.queryResult = styleDim.Render("nothing to yank")
@@ -431,21 +432,25 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queryResult = styleDim.Render("yanked body of " + m.subjectLabel(subj))
 			return m, nil
 
-		case "d", "D":
+		case "d":
 			if m.loading {
 				m.queryResult = styleDim.Render("still loading…")
 				return m, nil
 			}
-			// `d` deletes what the cursor is on — a link row means that link;
-			// anything else means the vertex. `D` always means the vertex, for
-			// when the cursor happens to sit on a link.
-			if msg.String() == "d" {
-				if dl, ok := m.cursorLink(); ok {
-					f := openDeleteLinkForm(m, dl)
-					m.form = &f
-					m.queryResult = ""
+			// Deletes the SUBJECT, on the same rule as `i`.
+			switch subj := m.subject(); subj.kind {
+			case subjLink:
+				if refusal := crudRefusesLink(m.llMode, m.tierOfSubjectLink(subj.link)); refusal != "" {
+					m.queryResult = styleErr.Render(refusal)
 					return m, nil
 				}
+				f := openDeleteLinkForm(m, subj.link)
+				m.form = &f
+				m.queryResult = ""
+				return m, nil
+			case subjNone:
+				m.queryResult = styleDim.Render(m.noSubjectHint())
+				return m, nil
 			}
 			f, refusal := openDeleteVertexForm(m)
 			if refusal != "" {
@@ -783,11 +788,16 @@ func (m tuiModel) updateCreateMenu(kMsg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			continue
 		}
 		if !e.available() {
+			m.form = nil
+			m.queryResult = styleDim.Render(e.why)
+			if e.unavailableAt == "" {
+				// Blocked by the armed API rather than by location — there is
+				// nowhere to go, only a key to press, and the reason says so.
+				return m, nil
+			}
 			// Rather than refusing, take the user where the action lives. The
 			// menu already said where that is; going there makes the rule
 			// concrete instead of theoretical.
-			m.form = nil
-			m.queryResult = styleDim.Render(e.why)
 			return m.navigateTo(e.unavailableAt)
 		}
 		var f formState
@@ -1039,6 +1049,16 @@ func (m tuiModel) clampQueryScroll() tuiModel {
 // what the user was never shown. It waits for the detail read instead, and
 // says so.
 func (m tuiModel) openSubjectEditor(subj subject, focusKey string) (tuiModel, tea.Cmd) {
+	if subj.kind == subjNone {
+		m.queryResult = styleDim.Render(m.noSubjectHint())
+		return m, nil
+	}
+	if subj.kind == subjLink {
+		if refusal := crudRefusesLink(m.llMode, m.tierOfSubjectLink(subj.link)); refusal != "" {
+			m.queryResult = styleErr.Render(refusal)
+			return m, nil
+		}
+	}
 	if subj.kind == subjLink {
 		f, refusal := openLinkEditForm(m, subj.link, focusKey)
 		if refusal != "" {
@@ -1055,6 +1075,11 @@ func (m tuiModel) openSubjectEditor(subj subject, focusKey string) (tuiModel, te
 		return m, textarea.Blink
 	}
 
+	kind, _ := m.vertexKind()
+	if refusal := crudRefusesVertex(m.llMode, kind, m.currentID); refusal != "" {
+		m.queryResult = styleErr.Render(refusal)
+		return m, nil
+	}
 	f, ok := openBodyEditForm(m)
 	if !ok {
 		m.queryResult = styleDim.Render("nothing to edit here")
