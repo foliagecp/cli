@@ -304,13 +304,10 @@ func TestDeleteLink_TypesLinkCascadesBehindATypedName(t *testing.T) {
 		m = update(m, key(string(r)))
 	}
 	_, cmd := updateCmd(m, keyEnter())
-	msg := runCmd(cmd).(mutationResultMsg)
+	runCmd(cmd)
 
 	if gotFrom != "hub/srv" || gotTo != "hub/rack" {
 		t.Errorf("typesLinkDelete(%q,%q), want (hub/srv, hub/rack)", gotFrom, gotTo)
-	}
-	if !msg.clearAll {
-		t.Error("a cascade touches unknown instances — the cache cannot be kept")
 	}
 }
 
@@ -372,11 +369,8 @@ func TestTier_StructuralEdgesNeedNoSecondRoundTrip(t *testing.T) {
 	// been. The edge type settles it for every structural edge.
 	schema := displayLink{info: makeLinkInfo("hub/srv", "rack", "hub/rack", ltInstanceOf), isOut: true}
 	m := onType("hub/srv", schema)
-	if len(m.cache) != 0 {
-		t.Fatal("fixture must have nothing cached")
-	}
 	if got := m.tierOfSubjectLink(schema); got != tierTypesLink {
-		t.Errorf("tier = %v with an empty cache, want tierTypesLink", got)
+		t.Errorf("tier = %v, want tierTypesLink derived from the edge alone", got)
 	}
 }
 

@@ -119,11 +119,10 @@ func submitBodyEditCmd(f formState) tea.Cmd {
 			res = ops.vertexUpdate(id, body, replace, false)
 		}
 		return mutationResultMsg{
-			op:         op,
-			target:     id,
-			res:        res,
-			invalidate: []string{id},
-			refresh:    true,
+			op:      op,
+			target:  id,
+			res:     res,
+			refresh: true,
 		}
 	}
 }
@@ -166,13 +165,6 @@ func openDeleteVertexForm(m tuiModel) (formState, string) {
 	}
 	entity := entityForVertex(kind, m.llMode)
 
-	// Neighbours are captured NOW: after the delete lands, m.links may already
-	// belong to a different vertex.
-	neighbours := make([]string, 0, len(m.links))
-	for _, dl := range m.links {
-		neighbours = append(neighbours, dl.target())
-	}
-
 	f := formState{
 		kind:    formDeleteVertex,
 		chrome:  chromeStatus,
@@ -204,7 +196,6 @@ func openDeleteVertexForm(m tuiModel) (formState, string) {
 	default:
 		f.title = "Delete vertex " + id + "?"
 	}
-	f.ctx.toID = strings.Join(neighbours, " ") // carried for invalidation
 	return f, ""
 }
 
@@ -263,7 +254,6 @@ func openDeleteLinkForm(m tuiModel, dl displayLink) formState {
 func submitDeleteVertexCmd(f formState) tea.Cmd {
 	id := f.ctx.fromID
 	entity := f.ctx.entity
-	neighbours := strings.Fields(f.ctx.toID)
 
 	return func() tea.Msg {
 		var (
@@ -281,22 +271,12 @@ func submitDeleteVertexCmd(f formState) tea.Cmd {
 			op = "vertex.delete"
 			res = ops.vertexDelete(id)
 		}
-
-		msg := mutationResultMsg{
+		return mutationResultMsg{
 			op:          op,
 			target:      id,
 			res:         res,
 			clearLinkIf: id,
 		}
-		if entity == entType {
-			// A type delete cascades into an unbounded number of object
-			// deletes; anything short of clearing the cache would be guesswork.
-			msg.clearAll = true
-		} else {
-			msg.invalidate = append([]string{id}, neighbours...)
-			msg.invalidate = append(msg.invalidate, deletionSinks...)
-		}
-		return msg
 	}
 }
 
@@ -308,21 +288,14 @@ func submitDeleteLinkCmd(f formState) tea.Cmd {
 
 	return func() tea.Msg {
 		msg := mutationResultMsg{
-			target:     stripDomain(owner) + " ──▶ " + stripDomain(target),
-			invalidate: []string{owner, target},
-			refresh:    true,
+			target:  stripDomain(owner) + " ──▶ " + stripDomain(target),
+			refresh: true,
 		}
 		switch {
 		case tier == tierTypesLink:
 			msg.op, msg.res = "typeslink.delete", ops.typesLinkDelete(owner, target)
-			// The cascade touches every instance of the source type. Anything
-			// short of dropping the cache would be guesswork about which.
-			msg.clearAll, msg.invalidate = true, nil
 		case tier == tierSubType:
 			msg.op, msg.res = "type.subtype.rm", ops.subTypeRemove(owner, target)
-			// Removing a sub-type relation re-runs the inheritance computation
-			// on arbitrary descendants.
-			msg.clearAll, msg.invalidate = true, nil
 		case tier == tierSuperLink && isSuper:
 			msg.op, msg.res = "objectslink.super.delete",
 				ops.superLinkDelete(owner, target, fromClaim, toClaim)
@@ -495,11 +468,10 @@ func submitLinkCreateCmd(f formState) tea.Cmd {
 			res = ops.linkCreate(from, to, name, linkType, tags, body, force)
 		}
 		return mutationResultMsg{
-			op:         op,
-			target:     stripDomain(from) + " → " + stripDomain(to),
-			res:        res,
-			invalidate: []string{from, to},
-			refresh:    true,
+			op:      op,
+			target:  stripDomain(from) + " → " + stripDomain(to),
+			res:     res,
+			refresh: true,
 		}
 	}
 }
@@ -759,13 +731,12 @@ func submitCreateCmd(f formState) tea.Cmd {
 				linkRes.details = "vertex created but linking it failed: " + linkRes.details
 				return mutationResultMsg{
 					op: "vertex.create", target: id, res: linkRes,
-					invalidate: []string{canon, from}, refresh: true,
+					refresh: true,
 				}
 			}
 			return mutationResultMsg{
 				op: "vertex.create", target: id, res: res,
-				invalidate: []string{canon, from},
-				navTo:      canon, // land on what was just made
+				navTo: canon, // land on what was just made
 			}
 		}
 	case formTypeCreate:
@@ -777,7 +748,6 @@ func submitCreateCmd(f formState) tea.Cmd {
 			res := ops.typeCreate(name, easyjson.NewJSONObject())
 			msg := mutationResultMsg{
 				op: "type.create", target: name, res: res,
-				invalidate: []string{canon, hubID("types")},
 			}
 			if res.status != opFailed {
 				msg.navTo = canon
@@ -789,15 +759,10 @@ func submitCreateCmd(f formState) tea.Cmd {
 	case formObjectCreate:
 		id, tp := f.value("id"), f.value("type")
 		canon := canonIDIn(id, dom)
-		// ctx.fromID is the type vertex the user is standing on, already in
-		// canonical form — which is exactly the cache entry that has to be
-		// evicted for the new instance to show up on it.
-		typeCanon := f.ctx.fromID
 		return func() tea.Msg {
 			res := ops.objectCreate(id, tp, easyjson.NewJSONObject())
 			msg := mutationResultMsg{
 				op: "object.create", target: id, res: res,
-				invalidate: []string{canon, typeCanon, hubID("objects")},
 			}
 			if res.status != opFailed {
 				msg.navTo = canon
@@ -814,8 +779,7 @@ func submitCreateCmd(f formState) tea.Cmd {
 				res: ops.subTypeSet(base, child),
 				// The inheritance recompute rewrites cached parent lists on
 				// arbitrary descendants, so nothing cached can be trusted.
-				clearAll: true,
-				refresh:  true,
+				refresh: true,
 			}
 		}
 	}
@@ -942,7 +906,7 @@ func submitLinkEditCmd(f formState) tea.Cmd {
 		}
 		return mutationResultMsg{
 			op: op, target: stripDomain(owner) + " ──▶ " + stripDomain(target),
-			res: res, invalidate: []string{owner, target}, refresh: true,
+			res: res, refresh: true,
 		}
 	}
 }
@@ -1002,30 +966,4 @@ func destinationAfterDelete(ctx formCtx, history []string) (string, []string) {
 		return history[n-1], history[:n-1]
 	}
 	return hubID("root"), history
-}
-
-// deletionSinks are the built-in vertices a delete can ADD something to.
-//
-// The CLI cannot derive this: where a deleted entity goes is server policy,
-// and the SDK the CLI is pinned against does not model it at all. A runtime
-// with a trash can does NOT erase a live typed object — it cascades the
-// object's links away, keeps the body, and re-links it as
-//
-//	hub/trash_can --__object--> the object
-//	the object    --__type--->  hub/trash_can
-//
-// with the original type and the deletion moment on the trash-can edge. So
-// `hub/objects` LOSES an edge and `hub/trash_can` GAINS one, and neither is a
-// neighbour of the object at the moment the delete is issued — which is why
-// neither was being evicted.
-//
-// That is the whole of "the trash can does not work": it was working, and the
-// browser was replaying a link list captured before the object arrived there.
-// Restarting the TUI appeared to fix it only because that empties the cache.
-//
-// A type delete needs no such list — it cascades into an unbounded number of
-// object deletes and clears the cache outright.
-var deletionSinks = []string{
-	hubID("trash_can"),
-	hubID("objects"),
 }

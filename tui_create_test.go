@@ -619,33 +619,6 @@ func TestObjectAndTypeCreate_LandOnWhatWasCreated(t *testing.T) {
 	}
 }
 
-// TestObjectCreate_EvictsTheTypeUnderItsCanonicalKey is the regression test for
-// "I created an object and there is no link from the type to it".
-//
-// The link was always created by the server. What was broken is that the type
-// vertex sat in the cache under `hub/srv` while the invalidation named `srv`,
-// so walking back to the type replayed a link list captured before the object
-// existed. The eviction has to speak the same id form as the cache.
-func TestObjectCreate_EvictsTheTypeUnderItsCanonicalKey(t *testing.T) {
-	withOps(t, graphOps{
-		objectCreate: func(string, string, easyjson.JSON) opResult { return opResult{status: opApplied} },
-	})
-
-	m := makeModel("hub/srv", typeAt("hub/srv"), nil)
-	m.cache["hub/srv"] = cachedVertex{}
-	m = update(m, key("n"))
-	m = update(m, key("o"))
-	m = focusField(m, "id")
-	m = typeText(m, "srv-1")
-	_, cmd := updateCmd(m, tea_ctrlS())
-
-	msg := runCmd(cmd).(mutationResultMsg)
-	next, _ := m.Update(msg)
-	if _, stale := next.(tuiModel).cache["hub/srv"]; stale {
-		t.Error("the type is still cached — walking back to it would hide the new object")
-	}
-}
-
 func TestSubType_DeclaredFromTheParentType(t *testing.T) {
 	var base, child string
 	withOps(t, graphOps{
@@ -660,12 +633,9 @@ func TestSubType_DeclaredFromTheParentType(t *testing.T) {
 	}
 	m = typeText(m, "srv")
 	_, cmd := updateCmd(m, tea_ctrlS())
-	msg := runCmd(cmd).(mutationResultMsg)
+	runCmd(cmd)
 
 	if base != "hub/hw" || child != "srv" {
 		t.Errorf("subTypeSet(%q,%q), want (hub/hw, srv)", base, child)
-	}
-	if !msg.clearAll {
-		t.Error("declaring a sub-type rewrites inherited state on descendants; the cache cannot be trusted")
 	}
 }

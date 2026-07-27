@@ -91,12 +91,17 @@ can see the link, so pressing the edit key over it is the obvious move.
 | `/` | JPGQL query from current vertex |
 | `f` | Live filter links by name · `Esc` restores the previous filter |
 | `e` | Export graph to file (graphml / dot / json2xml), choose depth |
-| `r` / `Ctrl+R` | Refresh current vertex · also clear the entire cache |
+| `r` | Reload where you are standing — for changes somebody else made |
 | `R` | Jump to `root` and reset all state, including a pending link |
 | `g` / `G` | Scroll the body up / down |
 | `x` | Switch the CRUD API between high-level and low-level |
-| `?` | Show the full keymap |
+| `?` | Show the full keymap · `j`/`k` scroll it |
 | `q` / `Ctrl+C` | Quit |
+
+**Nothing is cached.** Every navigation is a real read, so what is on screen is
+what the graph says now — the CLI is not the only thing writing to it. `r` is
+for the one case navigation cannot cover: somebody else changed something while
+you stood still.
 
 `Esc` always pops one level and never destroys data. `Ctrl+C` quits from
 anywhere. `q` quits while browsing and is an ordinary letter wherever there is

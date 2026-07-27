@@ -73,10 +73,24 @@ func TestResultFromDetails_EmptyOpStackIsNoop(t *testing.T) {
 	}
 }
 
-func TestResultFromDetails_MissingOpStackIsNoop(t *testing.T) {
+// TestResultFromDetails_MissingOpStackIsNotEvidence: absence of evidence is
+// not evidence of absence. A runtime that parks a deleted object in a trash can
+// replies WITHOUT an op_stack, and calling that a no-op made a successful
+// delete report "already in that state" and leave the user standing on the
+// vertex they had just deleted.
+func TestResultFromDetails_MissingOpStackIsNotEvidence(t *testing.T) {
 	r := resultFromDetails(easyjson.NewJSONObject(), nil)
-	if r.status != opNoop {
-		t.Fatalf("status = %v, want opNoop when op_stack is absent", r.status)
+	if r.status != opApplied {
+		t.Fatalf("status = %v, want opApplied when op_stack is absent — "+
+			"the server did not say nothing happened, it said nothing", r.status)
+	}
+
+	// An op_stack that came back EMPTY is the real signal: the server looked
+	// and wrote nothing.
+	empty := easyjson.NewJSONObject()
+	empty.SetByPath("op_stack", easyjson.NewJSONArray())
+	if r := resultFromDetails(empty, nil); r.status != opNoop {
+		t.Errorf("status = %v, want opNoop for an empty op_stack", r.status)
 	}
 }
 
@@ -219,39 +233,6 @@ func TestVertexKindBadge_NamesEveryKind(t *testing.T) {
 		if !strings.Contains(got, c.want) {
 			t.Errorf("%s badge = %q, want it to contain %q", c.name, got, c.want)
 		}
-	}
-}
-
-// ── cache invalidation ────────────────────────────────────────────────────────
-
-func TestInvalidate_EvictsListedAndIgnoresEmpty(t *testing.T) {
-	m := makeModel("hub/a", nil, nil)
-	m.cache["hub/a"] = cachedVertex{}
-	m.cache["hub/b"] = cachedVertex{}
-	m.cache["hub/c"] = cachedVertex{}
-
-	m = m.invalidate("hub/a", "", "hub/c")
-
-	if _, ok := m.cache["hub/a"]; ok {
-		t.Error("hub/a should have been evicted")
-	}
-	if _, ok := m.cache["hub/c"]; ok {
-		t.Error("hub/c should have been evicted")
-	}
-	if _, ok := m.cache["hub/b"]; !ok {
-		t.Error("hub/b should have survived")
-	}
-}
-
-func TestInvalidateAll_ClearsEverything(t *testing.T) {
-	m := makeModel("hub/a", nil, nil)
-	m.cache["hub/a"] = cachedVertex{}
-	m.cache["hub/b"] = cachedVertex{}
-
-	m = m.invalidateAll()
-
-	if len(m.cache) != 0 {
-		t.Fatalf("cache size = %d, want 0", len(m.cache))
 	}
 }
 

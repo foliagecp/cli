@@ -82,20 +82,15 @@ func linkEndpoints(dl displayLink) (owner, target string) {
 
 // tierOfSubjectLink classifies the selected edge without a round trip.
 //
-// The far endpoint's kind comes from the edge itself where the edge type
-// settles it — every structural edge does — and from the cache otherwise. A
-// user-typed edge between two objects is the case neither covers, and there it
-// degrades to the raw API: correct, just less clever. Whichever it lands on is
-// spelled out in the panel's `via` row, so the user is never guessing which
-// API the next keystroke will call.
+// The far endpoint's kind comes from the edge itself, which settles it for
+// every edge the CMDB owns — those are exactly the ones where the tier
+// changes what happens. A user-typed edge between two objects is the case it
+// cannot settle, and there it degrades to the raw API: correct, just less
+// clever. Whichever it lands on is spelled out in the panel's `via` row, so
+// the user is never guessing which API the next keystroke will call.
 func (m tuiModel) tierOfSubjectLink(dl displayLink) linkTier {
 	nearKind, _ := m.vertexKind()
-	farKind, known := inferFarKind(dl)
-	if !known {
-		if cv, ok := m.cache[canonID(dl.target())]; ok {
-			farKind, _ = classifyVertex(canonID(dl.target()), cv.links)
-		}
-	}
+	farKind, _ := inferFarKind(dl)
 	return tierOfExistingLink(dl, nearKind, farKind, m.llMode)
 }
 

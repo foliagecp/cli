@@ -36,21 +36,6 @@ func TestCanonIDIn_KeepsSomethingInItsOwnDomain(t *testing.T) {
 	}
 }
 
-// TestInvalidate_MatchesTheCacheKeyForm is the unit-level statement of the
-// bug behind "there is no link from the type to my new object": the cache is
-// keyed canonically, the create flow held a bare name, and the eviction was a
-// silent miss.
-func TestInvalidate_MatchesTheCacheKeyForm(t *testing.T) {
-	m := makeModel("hub/srv", nil, nil)
-	m.cache["hub/srv"] = cachedVertex{}
-
-	m = m.invalidate("srv")
-
-	if _, still := m.cache["hub/srv"]; still {
-		t.Error("invalidate(\"srv\") must evict the entry cached as \"hub/srv\"")
-	}
-}
-
 // ── Classification ────────────────────────────────────────────────────────────
 
 func TestClassifyVertex_Table(t *testing.T) {

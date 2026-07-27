@@ -426,34 +426,6 @@ func TestBodyEdit_PassesReplaceFlag(t *testing.T) {
 	}
 }
 
-func TestMutationResult_InvalidatesAndToasts(t *testing.T) {
-	m := makeModel("hub/x", nil, nil)
-	m.cache["hub/x"] = cachedVertex{}
-	m.cache["hub/y"] = cachedVertex{}
-
-	msg := mutationResultMsg{
-		op:         "vertex.update",
-		target:     "hub/x",
-		res:        opResult{status: opApplied},
-		invalidate: []string{"hub/x"},
-	}
-	next, _ := m.Update(msg)
-	m = next.(tuiModel)
-
-	if _, ok := m.cache["hub/x"]; ok {
-		t.Error("hub/x should have been evicted")
-	}
-	if _, ok := m.cache["hub/y"]; !ok {
-		t.Error("hub/y should have survived")
-	}
-	if !strings.Contains(m.queryResult, "✓") {
-		t.Errorf("toast = %q, want a success marker", m.queryResult)
-	}
-	if m.form != nil {
-		t.Error("the form should be closed once the result lands")
-	}
-}
-
 func TestMutationResult_NoopIsDistinctFromApplied(t *testing.T) {
 	m := makeModel("hub/x", nil, nil)
 	msg := mutationResultMsg{

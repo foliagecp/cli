@@ -1,40 +1,9 @@
 package main
 
-// Cache invalidation and view-state preservation across a reload.
+// View-state preservation across a reload.
 //
-// Both exist for the same reason: a mutation is followed by a refetch, and
-// without help that refetch (a) serves stale cached neighbours and (b) throws
-// the user back to the top of the link list with every group re-expanded.
-
-// ── Cache invalidation ────────────────────────────────────────────────────────
-
-// invalidate evicts specific vertices from the cache. Empty ids are ignored so
-// callers can pass optional endpoints without guarding each one.
-//
-// Ids are canonicalised, and that is load-bearing rather than tidy: cache keys
-// are always domain-qualified, while a form field or a create flow naturally
-// holds the bare name the user typed. Evicting `srv` while the entry sits under
-// `hub/srv` is a silent no-op — which is exactly why a freshly created object
-// did not appear on its type until the cache happened to be dropped for some
-// other reason.
-func (m tuiModel) invalidate(ids ...string) tuiModel {
-	for _, id := range ids {
-		if id != "" {
-			delete(m.cache, canonID(id))
-		}
-	}
-	return m
-}
-
-// invalidateAll drops the whole cache. Used after cascading operations
-// (type delete, types-link delete, subtype set/remove) whose blast radius is
-// unbounded: they touch every instance of a type, or rewrite the inheritance
-// cache on arbitrary descendants. Anything cleverer would be guesswork for the
-// sake of saving one refetch.
-func (m tuiModel) invalidateAll() tuiModel {
-	m.cache = make(map[string]cachedVertex)
-	return m.forgetLinkDetails()
-}
+// A mutation is followed by a refetch, and without help that refetch throws the
+// user back to the top of the link list with every group re-expanded.
 
 // ── View-state preservation ───────────────────────────────────────────────────
 

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Discoverability.
@@ -154,15 +155,86 @@ func TestKeymap_StatusHintsAreAllRealBindings(t *testing.T) {
 }
 
 func TestHelp_ShowsEveryBinding(t *testing.T) {
-	// Both surfaces come from the keymap, so this is nearly a tautology — which is
-	// the point. It used to be two hand-written lists that drifted.
+	// Both surfaces come from the keymap, so this is nearly a tautology — which
+	// is the point. It used to be two hand-written lists that drifted.
+	//
+	// Rendered in ONE column and squeezed of whitespace: long descriptions wrap
+	// onto continuation lines, and in a multi-column layout the other column's
+	// text sits between the halves of a wrapped line.
 	m := makeModel("hub/x", nil, nil)
-	m.width, m.height = 200, 60
-	out := stripANSI(m.renderHelp())
+	m.width, m.height = 90, 300
+	out := squeeze(stripANSI(m.renderHelp()))
 	for _, b := range keymap {
-		if !strings.Contains(out, b.desc) {
+		if !strings.Contains(out, squeeze(b.desc)) {
 			t.Errorf("the help screen omits %q (%s)", b.keys, b.desc)
 		}
+	}
+}
+
+func squeeze(s string) string { return strings.Join(strings.Fields(s), "") }
+
+// TestHelp_FitsTheTerminalAndSaysWhenThereIsMore. The keymap does not fit an
+// 80x24 terminal and never will; entries that run off the bottom may as well
+// not exist, so it scrolls and says so.
+func TestHelp_FitsTheTerminalAndSaysWhenThereIsMore(t *testing.T) {
+	for _, wh := range [][2]int{{80, 24}, {100, 40}, {200, 60}} {
+		m := makeModel("hub/x", nil, nil)
+		m.width, m.height = wh[0], wh[1]
+		m.helpOpen = true
+
+		lines := strings.Split(m.renderHelp(), "\n")
+		if len(lines) > m.height {
+			t.Errorf("%dx%d: help is %d lines — it runs off the bottom", wh[0], wh[1], len(lines))
+		}
+		for _, l := range lines {
+			if w := lipgloss.Width(l); w > m.width {
+				t.Errorf("%dx%d: a help line is %d cells wide", wh[0], wh[1], w)
+			}
+		}
+	}
+}
+
+func TestHelp_ScrollsWithJKAndClosesOnAnythingElse(t *testing.T) {
+	m := makeModel("hub/x", nil, nil)
+	m.width, m.height = 80, 24
+	m = update(m, key("?"))
+
+	m = update(m, key("j"))
+	if !m.helpOpen {
+		t.Fatal("j should scroll the help, not close it")
+	}
+	if m.helpOffset != 1 {
+		t.Errorf("helpOffset = %d, want 1", m.helpOffset)
+	}
+	m = update(m, key("k"))
+	if m.helpOffset != 0 {
+		t.Errorf("helpOffset = %d after k, want 0", m.helpOffset)
+	}
+	m = update(m, key("k"))
+	if m.helpOffset != 0 {
+		t.Error("scrolling up past the top should stop, not go negative")
+	}
+
+	m = update(m, key("v"))
+	if m.helpOpen {
+		t.Error("any other key should close the help")
+	}
+}
+
+// TestHelp_UsesTheWidthItIsGiven guards the regression that started this: a
+// hardcoded column width clipped the longest descriptions, and measuring the
+// widest one instead made the columns so wide that two never fit.
+func TestHelp_UsesTheWidthItIsGiven(t *testing.T) {
+	narrow := makeModel("hub/x", nil, nil)
+	narrow.width, narrow.height = 90, 200
+	wide := makeModel("hub/x", nil, nil)
+	wide.width, wide.height = 200, 200
+
+	nLines := len(strings.Split(stripANSI(narrow.renderHelp()), "\n"))
+	wLines := len(strings.Split(stripANSI(wide.renderHelp()), "\n"))
+	if wLines >= nLines {
+		t.Errorf("a wide terminal should lay out in columns: %d lines at 200 vs %d at 90",
+			wLines, nLines)
 	}
 }
 
@@ -177,9 +249,10 @@ func TestHelp_OpensAndAnyKeyCloses(t *testing.T) {
 		t.Error("the help screen should be what View renders while it is open")
 	}
 
-	m = update(m, key("j"))
+	// j and k scroll; anything else closes.
+	m = update(m, key("v"))
 	if m.helpOpen {
-		t.Error("any key should close the help screen")
+		t.Error("any key other than a scroll should close the help screen")
 	}
 }
 

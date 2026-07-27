@@ -168,49 +168,7 @@ func TestDelete_TypeTierRequiresTheNameTyped(t *testing.T) {
 	}
 }
 
-func TestDelete_TypeClearsTheWholeCache(t *testing.T) {
-	withOps(t, graphOps{
-		typeDelete: func(string) opResult { return opResult{status: opApplied} },
-	})
-
-	m := makeModel("hub/srv", typeVertexLinks(), nil)
-	m.cache["hub/unrelated"] = cachedVertex{}
-	m = update(m, key("d"))
-	for _, r := range "srv" {
-		m = update(m, key(string(r)))
-	}
-	_, cmd := updateCmd(m, keyEnter())
-	msg := runCmd(cmd)
-
-	mr, ok := msg.(mutationResultMsg)
-	if !ok {
-		t.Fatalf("expected mutationResultMsg, got %T", msg)
-	}
-	if !mr.clearAll {
-		t.Error("a type delete cascades into unbounded object deletes; the cache must be cleared wholesale")
-	}
-}
-
 // ── Consequences of a successful delete ───────────────────────────────────────
-
-func TestDelete_VertexInvalidatesNeighbours(t *testing.T) {
-	withOps(t, graphOps{
-		vertexDelete: func(string) opResult { return opResult{status: opApplied} },
-	})
-
-	m := makeModel("hub/x", threeLinks(), nil)
-	m = update(m, key("x")) // a plain vertex is a low-level entity
-	m = update(m, key("d"))
-	_, cmd := updateCmd(m, key("y"))
-	msg := runCmd(cmd).(mutationResultMsg)
-
-	joined := strings.Join(msg.invalidate, ",")
-	for _, want := range []string{"hub/x", "c1", "c2", "c3"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("invalidate = %v, want it to include %q", msg.invalidate, want)
-		}
-	}
-}
 
 func TestDelete_NavigatesAwayFromTheDeletedVertex(t *testing.T) {
 	// gWalkTo persists the current id on every load. Staying on a deleted
@@ -445,75 +403,47 @@ func TestDelete_PlainVertexStillFallsBackToTheHistory(t *testing.T) {
 	}
 }
 
-// TestDelete_EvictsWhereTheDeletedThingWENT is the regression test for "the
-// object is not in the trash can until I restart the terminal".
+// TestNavigation_AlwaysFetches is the replacement for a whole family of
+// cache-invalidation tests, and the answer to "I delete an object, walk to the
+// trash can, and it is not there until I restart the CLI".
 //
-// A runtime with a trash can parks the object under hub/trash_can instead of
-// erasing it, so that vertex GAINS an edge and hub/objects LOSES one — and
-// neither is a neighbour of the object at the moment the delete is issued, so
-// neither was being evicted. The browser then replayed a link list captured
-// before the object arrived.
-func TestDelete_EvictsWhereTheDeletedThingWENT(t *testing.T) {
-	withOps(t, graphOps{
-		objectDelete: func(string) opResult { return opResult{status: opApplied} },
-	})
-
+// It was there. The browser was replaying a link list captured before the
+// object was parked. Chasing that with invalidation lists is unwinnable — the
+// CLI cannot know every vertex a server-side operation touches (the trash can
+// is one; restoring FROM it is the next), and it cannot know about the other
+// people writing to the same graph at all.
+//
+// So nothing is cached and every navigation is a real read.
+func TestNavigation_AlwaysFetches(t *testing.T) {
 	m := makeModel("hub/srv-1", objectVertexLinks(), nil)
-	m.cache[hubID("trash_can")] = cachedVertex{}
-	m.cache[hubID("objects")] = cachedVertex{}
 
-	m = update(m, key("d"))
-	_, cmd := updateCmd(m, key("y"))
-	next := update(m, runCmd(cmd))
-
-	for _, id := range []string{hubID("trash_can"), hubID("objects")} {
-		if _, stale := next.cache[id]; stale {
-			t.Errorf("%s is still cached — walking there would show the state before the delete", id)
+	for _, dest := range []string{hubID("trash_can"), "hub/srv", hubID("root")} {
+		next, cmd := m.navigateTo(dest)
+		if cmd == nil {
+			t.Fatalf("navigating to %s should load it", dest)
+		}
+		if _, isFetch := cmd().(vertexInfoMsg); !isFetch {
+			t.Errorf("%s was not fetched — a browser that shows a snapshot is "+
+				"showing something that may no longer be true", dest)
+		}
+		if !next.loading {
+			t.Errorf("%s: a real fetch should show as loading", dest)
 		}
 	}
 }
 
-// TestTrashCan_ParkedObjectIsVisibleWithoutRestartingTheCLI walks the exact
-// sequence that failed:
-//
-//	visit the trash can · create an object · delete it · walk back to the trash can
-//
-// The last step used to be a cache HIT on a link list captured before the
-// object was parked, so the object was not there — and closing and reopening
-// the CLI "fixed" it because that starts with an empty cache.
-func TestTrashCan_ParkedObjectIsVisibleWithoutRestartingTheCLI(t *testing.T) {
-	trash := hubID("trash_can")
+// TestReload_IsTheOneThingNavigationCannotDo. Standing still while somebody
+// else changes the graph is the one case a fetch-on-navigate model does not
+// cover, which is exactly what `r` is for.
+func TestReload_IsTheOneThingNavigationCannotDo(t *testing.T) {
+	m := makeModel("hub/x", threeLinks(), nil)
+	gen := m.loadGen
 
-	withOps(t, graphOps{
-		objectDelete: func(string) opResult { return opResult{status: opApplied} },
-	})
-
-	// 1. The user has been to the trash can, so it is cached — with the link
-	//    list as it was BEFORE the object existed.
-	m := makeModel("hub/srv-1", objectVertexLinks(), nil)
-	m.cache[trash] = cachedVertex{fvi: &fullVertexInfo{id: trash}, links: nil}
-
-	// 2. Delete the object.
-	m = update(m, key("d"))
-	_, cmd := updateCmd(m, key("y"))
-	m = update(m, runCmd(cmd))
-
-	// 3. Walk to the trash can. A cache hit here is the bug: it would replay
-	//    the empty list. Only a real fetch can show the parked object.
-	m, navCmd := m.navigateTo(trash)
-	if navCmd == nil {
-		t.Fatal("navigating to the trash can should load it")
+	m, cmd := updateCmd(m, key("r"))
+	if cmd == nil || m.loadGen != gen+1 || !m.loading {
+		t.Fatal("r should reload where you are standing")
 	}
-	switch navCmd().(type) {
-	case vertexLoadedMsg:
-		t.Fatal("served the trash can from cache — that list predates the deletion, " +
-			"which is why the object only appeared after restarting the CLI")
-	case vertexInfoMsg:
-		// A real fetch. Correct.
-	default:
-		t.Fatalf("unexpected load message %T", navCmd())
-	}
-	if !m.loading {
-		t.Error("a real fetch should show as loading")
+	if _, isFetch := runCmd(cmd).(vertexInfoMsg); !isFetch {
+		t.Error("r should issue a real read")
 	}
 }

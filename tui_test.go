@@ -832,33 +832,17 @@ func TestNav_vTogglesRawBody(t *testing.T) {
 
 // ── Refresh ───────────────────────────────────────────────────────────────────
 
-func TestNav_rRefreshes(t *testing.T) {
+func TestNav_rReloads(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", threeLinks(), &fvi)
-	m.cache[m.currentID] = cachedVertex{fvi: m.fvi, links: m.links}
 	initialGen := m.loadGen
 
 	m = update(m, key("r"))
-	if _, ok := m.cache["root"]; ok {
-		t.Error("r should remove current vertex from cache")
-	}
 	if !m.loading {
 		t.Error("r should trigger loading")
 	}
 	if m.loadGen != initialGen+1 {
 		t.Errorf("r should increment loadGen: want %d, got %d", initialGen+1, m.loadGen)
-	}
-}
-
-func TestNav_CtrlRClearsCache(t *testing.T) {
-	fvi := makeVertexInfo("root", nil, nil)
-	m := makeModel("root", threeLinks(), &fvi)
-	m.cache["root"] = cachedVertex{fvi: m.fvi}
-	m.cache["child"] = cachedVertex{fvi: m.fvi}
-
-	m = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
-	if len(m.cache) != 0 {
-		t.Errorf("ctrl+r should clear entire cache, got %d entries", len(m.cache))
 	}
 }
 
@@ -1028,61 +1012,6 @@ func TestMsg_LinksLoadedMsg_Stale(t *testing.T) {
 	}
 	if len(m.links) != 0 {
 		t.Error("stale linksLoadedMsg should not update links")
-	}
-}
-
-func TestMsg_LinksLoadedMsg_CachesVertex(t *testing.T) {
-	fvi := makeVertexInfo("root", nil, nil)
-	m := makeModel("root", nil, &fvi)
-	m.loading = true
-	m.loadGen = 1
-	m.ready = true
-	m.bodyVP = viewport.New(40, 30)
-
-	links := []displayLink{
-		{info: makeLinkInfo("root", "l1", "c1", ""), isOut: true},
-	}
-	m = update(m, linksLoadedMsg{id: "root", gen: 1, links: links})
-
-	if _, ok := m.cache["root"]; !ok {
-		t.Error("linksLoadedMsg should cache the vertex")
-	}
-}
-
-func TestMsg_VertexLoadedMsg_SetsState(t *testing.T) {
-	m := newTuiModel("root")
-	m.width = 120
-	m.height = 40
-	m.ready = true
-	m.bodyVP = viewport.New(40, 30)
-	m.loading = true
-
-	fvi := makeVertexInfo("child", nil, nil)
-	links := []displayLink{
-		{info: makeLinkInfo("child", "l", "x", "t"), isOut: true},
-	}
-	m = update(m, vertexLoadedMsg{id: "child", fvi: &fvi, links: links})
-
-	if m.loading {
-		t.Error("should not be loading after vertexLoadedMsg")
-	}
-	if m.currentID != "child" {
-		t.Errorf("currentID: want child, got %q", m.currentID)
-	}
-	if len(m.links) != 1 {
-		t.Errorf("links: want 1, got %d", len(m.links))
-	}
-}
-
-func TestMsg_VertexLoadedMsg_Stale(t *testing.T) {
-	fvi := makeVertexInfo("root", nil, nil)
-	m := makeModel("root", nil, &fvi)
-	m.loadGen = 5
-
-	newFVI := makeVertexInfo("other", nil, nil)
-	m = update(m, vertexLoadedMsg{id: "other", gen: 2, fvi: &newFVI})
-	if m.currentID != "root" {
-		t.Error("stale vertexLoadedMsg should not change currentID")
 	}
 }
 

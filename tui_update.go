@@ -44,50 +44,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.inTypes2 = msg.inTypes
 		return m, nil
 
-	case vertexLoadedMsg:
-		if msg.gen != m.loadGen {
-			return m, nil
-		}
-		m.loading = false
-		m.linksTotal = 0
-		if msg.err != nil {
-			m.errMsg = msg.err.Error()
-			return m, nil
-		}
-		m.errMsg = ""
-		if msg.partialErr != nil {
-			m.errMsg = msg.partialErr.Error()
-		}
-		m.currentID = msg.id
-		m.fvi = msg.fvi
-		m.links = msg.links
-		m.outTypes2 = nil
-		m.inTypes2 = nil
-		m.grouped = buildGroupedView(msg.links, m.searchQuery)
-		if m.restore != nil {
-			// Refresh triggered by the user's own edit (or by `r`): put them
-			// back where they were rather than at the top of the list.
-			m = applyRestore(m, m.restore)
-			m.restore = nil
-		} else {
-			m.rCursor = 0
-			m.lCursor = 0
-			m.rOffset = 0
-			m.lOffset = 0
-		}
-		m = m.refreshBody()
-		if m.ready {
-			m.bodyVP.GotoTop()
-		}
-		if err := gWalkTo(msg.id); err != nil {
-			if m.errMsg != "" {
-				m.errMsg += "; "
-			}
-			m.errMsg += "persist failed: " + err.Error()
-		}
-		m, peek := m.peekCursorLink()
-		return m, tea.Batch(fetchDepth2TypesCmd(m.loadGen, m.links), peek)
-
 	case vertexInfoMsg:
 		if msg.gen != m.loadGen {
 			return m, nil
@@ -103,6 +59,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentID = msg.id
 		m.fvi = msg.fvi
 		m.links = nil
+		// Edge details belong to the vertex that was on screen. Carrying them
+		// across a load is the same staleness as carrying the link list.
+		m = m.forgetLinkDetails()
 		m.outTypes2 = nil
 		m.inTypes2 = nil
 		m.grouped = groupedView{}
@@ -117,7 +76,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.linksTotal == 0 {
 			m.loading = false
-			m.cache[msg.id] = cachedVertex{fvi: m.fvi, links: nil}
 			if err := gWalkTo(msg.id); err != nil {
 				m.errMsg = "persist failed: " + err.Error()
 			}
@@ -150,9 +108,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.partialErr != nil {
 			m.errMsg = msg.partialErr.Error()
-		}
-		if m.fvi != nil && msg.partialErr == nil {
-			m.cache[msg.id] = cachedVertex{fvi: m.fvi, links: msg.links}
 		}
 		m = m.refreshBody()
 		if err := gWalkTo(msg.id); err != nil {
@@ -241,8 +196,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch m.mode() {
 	case modeHelp:
-		if _, isKey := msg.(tea.KeyMsg); isKey {
-			m.helpOpen = false
+		if kMsg, isKey := msg.(tea.KeyMsg); isKey {
+			switch kMsg.String() {
+			case "j", "down":
+				m.helpOffset++
+			case "k", "up":
+				if m.helpOffset > 0 {
+					m.helpOffset--
+				}
+			default:
+				m.helpOpen = false
+			}
 		}
 		return m, nil
 	case modeForm:
@@ -463,6 +427,7 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "?":
 			m.helpOpen = true
+			m.helpOffset = 0
 			m.queryResult = ""
 			return m, nil
 
@@ -535,15 +500,9 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "r":
-			delete(m.cache, m.currentID)
-			m.loading = true
-			m.linksTotal = 0
-			m.queryResult = ""
-			m.loadGen++
-			return m, fetchVertexCmd(m.currentID, m.loadGen)
-
-		case "ctrl+r":
-			m.cache = make(map[string]cachedVertex)
+			// Reload where you are standing. Navigation already fetches, so
+			// this is for the case navigation cannot cover: somebody else
+			// changed the graph while you stood still.
 			m = m.forgetLinkDetails()
 			m.loading = true
 			m.linksTotal = 0
@@ -763,9 +722,6 @@ func (m tuiModel) jumpTo(id string) (tuiModel, tea.Cmd) {
 		return m, nil
 	}
 	m.loadGen++
-	if cv, ok := m.cache[id]; ok {
-		return m, cacheHitCmd(id, m.loadGen, cv)
-	}
 	m.loading = true
 	m.linksTotal = 0
 	return m, fetchVertexCmd(id, m.loadGen)
@@ -853,16 +809,6 @@ func (m tuiModel) applyMutationResult(msg mutationResultMsg) (tea.Model, tea.Cmd
 		m.linking != nil && m.linking.fromID == msg.clearLinkIf {
 		m.linking = nil
 	}
-
-	if msg.clearAll {
-		m = m.invalidateAll()
-	} else {
-		m = m.invalidate(msg.invalidate...)
-	}
-	// Any write can rewrite the edges hanging off the vertices it touched, and
-	// an edge detail is one small read to recover. Keeping a stale tag list
-	// would be the same class of bug as the stale link list.
-	m = m.forgetLinkDetails()
 
 	if navTo != "" {
 		m.loadGen++

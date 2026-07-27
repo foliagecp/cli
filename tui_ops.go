@@ -55,8 +55,17 @@ func resultFromDetails(data easyjson.JSON, err error) opResult {
 	if err != nil {
 		return opResult{status: opFailed, details: err.Error(), err: err}
 	}
+	// An ABSENT op_stack is not evidence of a no-op — it is the absence of
+	// evidence. Only an op_stack that came back as an EMPTY ARRAY says the
+	// server looked and wrote nothing.
+	//
+	// Conflating the two broke deletes on a runtime with a trash can: parking
+	// an object replies without an op_stack, so a successful delete reported
+	// `∅ already in that state` and the TUI refused to move off the vertex it
+	// had just deleted — which is precisely how "I delete the object and it
+	// stays on screen" happens.
 	stack := data.GetByPath("op_stack")
-	if !stack.IsArray() || stack.ArraySize() == 0 {
+	if stack.IsArray() && stack.ArraySize() == 0 {
 		return opResult{status: opNoop, data: data}
 	}
 	return opResult{status: opApplied, data: data}
@@ -388,9 +397,7 @@ type mutationResultMsg struct {
 	op          string // "vertex.create", "objects.link.delete", … — for the toast
 	target      string // primary id the operation acted on
 	res         opResult
-	invalidate  []string // cache entries to evict
-	clearAll    bool     // cascading op ⇒ wipe the whole cache
-	refresh     bool     // reload the current vertex afterwards
-	navTo       string   // non-empty ⇒ navigate here (post-delete escape)
-	clearLinkIf string   // clear the anchor when it equals this id
+	refresh     bool   // reload the current vertex afterwards
+	navTo       string // non-empty ⇒ navigate here (post-delete escape)
+	clearLinkIf string // clear the anchor when it equals this id
 }

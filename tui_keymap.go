@@ -61,8 +61,7 @@ var keymap = []binding{
 	{keys: ":", desc: "go to a vertex by id · Tab cycles the built-in ones", mode: modeBrowse, group: "View", hint: ":goto", prio: 5},
 	{keys: "f", desc: "filter the link lists · Esc restores the previous filter", mode: modeBrowse, group: "View"},
 	{keys: "e", desc: "export the graph", mode: modeBrowse, group: "View"},
-	{keys: "r", desc: "refresh the current vertex", mode: modeBrowse, group: "View"},
-	{keys: "ctrl+r", desc: "refresh and clear the whole cache", mode: modeBrowse, group: "View"},
+	{keys: "r", desc: "reload where you are standing — for changes somebody else made", mode: modeBrowse, group: "View"},
 	{keys: "?", desc: "this screen", mode: modeBrowse, group: "View"},
 
 	{keys: "n", desc: "new… — what can be created from where you are standing", mode: modeBrowse, group: "Create", hint: "n:new", prio: 3},

@@ -32,20 +32,6 @@ var (
 
 // ── Messages ──────────────────────────────────────────────────────────────────
 
-type vertexLoadedMsg struct {
-	id         string
-	gen        int
-	fvi        *fullVertexInfo
-	links      []displayLink
-	err        error
-	partialErr error
-}
-
-type cachedVertex struct {
-	fvi   *fullVertexInfo
-	links []displayLink
-}
-
 type vertexInfoMsg struct {
 	id  string
 	gen int
@@ -317,8 +303,6 @@ type tuiModel struct {
 	exportDepthIdx int // index in exportDepthPresets
 	exportInput    textinput.Model
 
-	cache map[string]cachedVertex
-
 	outTypes2 []string
 	inTypes2  []string
 
@@ -359,6 +343,10 @@ type tuiModel struct {
 	// coming back is how "copy the body of an existing object" works without
 	// any extra API surface.
 	bodyRegister string
+
+	// helpOffset scrolls the keymap; it does not fit an 80x24 terminal and
+	// entries that run off the bottom may as well not exist.
+	helpOffset int
 
 	// helpOpen shows the full keymap. Checked before everything else, since
 	// the status bar can only advertise a handful of the bindings.
@@ -500,7 +488,6 @@ func newTuiModel(startID string) tuiModel {
 		searchInput: si,
 		exportInput: ei,
 		gotoInput:   gi,
-		cache:       make(map[string]cachedVertex),
 		linkDetails: make(map[linkKey]linkDetail),
 		focus:       panelCenter,
 	}
@@ -523,9 +510,9 @@ func gWalkTUI() error {
 // ── Commands ──────────────────────────────────────────────────────────────────
 
 // fetchVertexCmd loads a vertex. It canonicalises the id first, and every id
-// the model stores flows from the msg it returns — so this and cacheHitCmd are
-// the choke points that keep m.currentID, m.cache, m.history and the gwalk
-// cursor file all speaking the same form.
+// the model stores flows from the msg it returns — so this is the choke point
+// that keeps m.currentID, m.history and the gwalk cursor file all speaking the
+// same form.
 func fetchVertexCmd(id string, gen int) tea.Cmd {
 	id = canonID(id)
 	return func() tea.Msg {
@@ -537,13 +524,6 @@ func fetchVertexCmd(id string, gen int) tea.Cmd {
 			return vertexInfoMsg{id: id, gen: gen, err: err}
 		}
 		return vertexInfoMsg{id: id, gen: gen, fvi: &fvi}
-	}
-}
-
-func cacheHitCmd(id string, gen int, cv cachedVertex) tea.Cmd {
-	id = canonID(id)
-	return func() tea.Msg {
-		return vertexLoadedMsg{id: id, gen: gen, fvi: cv.fvi, links: cv.links}
 	}
 }
 
