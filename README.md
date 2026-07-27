@@ -19,28 +19,55 @@ A command-line interface for navigating and managing a [Foliage](https://github.
 foliage-cli tui
 ```
 
-Opens a full-screen three-panel TUI. Navigation starts from the last persisted position (or `root` on first run).
+Opens a full-screen three-panel TUI. Navigation starts from the last persisted
+position (or `root` on first run). Below 90 columns it falls back to a single
+column, which renders the same things — including every modal.
+
+Here the cursor is on a link, so the centre panel is showing that link:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  ◈ hub/network/router-1                            loading 5…    │
+│  ◈ hub/router-1                                                  │
 ├──────────────────┬───────────────────────────┬────────────────────┤
-│ ← INCOMING (2)  │ ◈ router-1  [mytype]       │ → OUTGOING (5)    │
+│ ← INCOMING (2)  │ ⎯ port-b   [objects-link]  │ → OUTGOING (5)    │
 │                  │                            │                    │
-│  managed_by  1   │  name:    Router 1         │  contains     3   │
-│    admin ←       │  status:  active           │    port-a →       │
-│                  │  ip:      10.0.0.1         │  ► port-b →       │
-│                  │                            │    port-c →       │
-│                  │  ──────────────────────    │                    │
-│                  │  managed_by ← │ → contains │  depends_on   2   │
-│                  │               │ → depends  │    upstream →     │
-│                  │                            │    gateway →      │
+│  managed_by  1   │  router-1  ──▶  port-b     │  contains     3   │
+│    admin ←       │                            │    port-a →       │
+│                  │  name  port-b              │  ► port-b →       │
+│                  │  type  contains            │    port-c →       │
+│                  │  via   objects-link        │                    │
+│                  │  tags  uplink, prod        │  depends_on   2   │
+│                  │                            │    upstream →     │
+│                  │  body                      │    gateway →      │
+│                  │    speed:  10G             │                    │
 └──────────────────┴───────────────────────────┴────────────────────┘
-  h/l:panel  jk:nav  Enter:go  Tab:collapse  b:back  v:raw  q:quit
+  jk:nav  Enter:go  b:back  n:new  i:edit  d:del  L:link  ?:help
 ```
 
 Press `?` inside the TUI for the full keymap — the status bar only has room for
-the most-used bindings.
+the most-used bindings. Both are rendered from one table in the source, so they
+cannot disagree with each other, and a test checks that table against the key
+handlers, so neither can disagree with the code.
+
+### You are always standing on a subject
+
+The subject is either a vertex or a link: put the cursor on a link row and that
+link becomes the subject, move off it and the vertex does. **The centre panel
+always shows the subject in full** — for a link that means its endpoints, name,
+type, API tier, tags and body, none of which used to be visible anywhere.
+
+Every action applies to the subject:
+
+| Key | Action |
+|---|---|
+| `i` | edit the subject |
+| `d` | delete the subject |
+| `y` | yank the subject's body, to paste with `ctrl+t` |
+| `I` / `D` | the same, but always the vertex — the escape hatch when the cursor is on a link |
+
+One rule, instead of the four this replaced. It is also why editing a link is
+not a binding you have to be told about: you can see the link, so pressing the
+edit key over it is the obvious move.
 
 **Navigate and view**
 
@@ -54,15 +81,25 @@ the most-used bindings.
 | `v` | Toggle raw JSON body vs. key-value view |
 | `c` | Copy current vertex ID to clipboard |
 | `/` | JPGQL query from current vertex |
-| `f` | Live filter links by name · `Esc` clears |
+| `f` | Live filter links by name · `Esc` restores the previous filter |
 | `e` | Export graph to file (graphml / dot / json2xml), choose depth |
 | `r` / `Ctrl+R` | Refresh current vertex · also clear the entire cache |
 | `R` | Jump to `root` and reset all state, including a pending link |
-| `g` / `G` | Scroll body up / down |
+| `g` / `G` | Scroll the body up / down |
+| `x` | Toggle the low-level API — marked `[LL]` beside the id |
 | `?` | Show the full keymap |
 | `q` / `Ctrl+C` | Quit |
 
-**Create**
+`Esc` always pops one level and never destroys data. `Ctrl+C` quits from
+anywhere. `q` quits while browsing and is an ordinary letter wherever there is
+a text field.
+
+The header badge names what you are standing on — `[type]`, `[object of srv]`,
+`[built-in]`, `[vertex]`, or `[object · instance-of link missing]` for a
+half-written one. It is worth reading, because it is what the create menu is
+gated on.
+
+### Create
 
 | Key | Action |
 |---|---|
@@ -71,9 +108,9 @@ the most-used bindings.
 | `Esc` | Cancel a pending link |
 
 **You create a thing where that thing lives.** Types are created from
-`hub/types`, objects from their own type, links from one of their endpoints,
-and a raw vertex is always attached to the vertex you create it from. This is
-not ceremony: the TUI finds things by walking the graph, so anything created
+`hub/types`, objects from their own type, sub-types from the parent type, and a
+raw vertex is always attached to the vertex you create it from. This is not
+ceremony: the TUI finds things by walking the graph, so anything created
 outside its home would be unreachable by the very tool that made it. After a
 successful create you are moved onto the new entity.
 
@@ -89,33 +126,45 @@ having a browser:
 3. At the target press `L` again to commit, or `Esc` to cancel.
 
 Which API the link goes through is derived from the endpoints and shown in the
-form title: type→type creates a **types-link** (a schema declaration), object→object
-an **objects-link** (whose link type comes from that schema and is therefore not
-editable), and anything else a **raw link**. Inside the form `←`/`→` swaps the
-direction.
+form title: type→type creates a **types-link** (a schema declaration),
+object→object an **objects-link**, and anything else a **raw link**. Inside the
+form `←`/`→` swaps the direction.
 
-**Modify and delete**
+An objects-link form also offers **from as** / **to as**, prefilled with the
+endpoints' real types. Naming a super-type of either instead links the two
+objects under a schema declared further up the hierarchy. Leave them alone for
+the ordinary case.
 
-| Key | Action |
-|---|---|
-| `i` | Edit a body — the current vertex's |
-| `t` | Edit the tags of the selected link |
-| `y` | Yank the displayed body, to reuse elsewhere |
-| `x` | Toggle the low-level API — shown as `[LL]` in the header |
-| `d` | Delete the selected link, or the vertex if the cursor is not on one |
-| `D` | Delete the current vertex |
+### Modify and delete
 
-> **Note:** `d` previously scrolled the body half a page (an undocumented
-> binding inherited from the viewport widget, duplicating `G`). It now deletes.
+`i` (or `t`, which lands on the tags row) opens the editor for the selected
+link: its tags and its body in one form, because the server applies `replace`
+to both with a single flag. The form is built from a read of the link, never
+from the list view — the list deliberately does not fetch tags or bodies, and a
+form seeded from it would show blanks over real data.
 
 Inside the body editor: `Ctrl+S` apply · `Ctrl+R` switch MERGE ⇄ REPLACE ·
-`Ctrl+E` open `$EDITOR` · `Esc` cancel. JSON is validated as you type and
-submission is blocked while it is invalid. Machine-owned paths (`triggers`,
-`cache`, …) are held aside and listed under the editor, so nothing is lost.
+`Ctrl+E` open `$EDITOR` · `Ctrl+T` paste the yanked body · `Esc` cancel. JSON is
+validated as you type and submission is blocked while it is invalid.
+Machine-owned paths (`triggers`, `cache`, a types-link's `type`, …) are held
+aside and listed under the editor, so nothing is lost.
+
+Deletion routes through whichever API owns the edge, which changes what it
+does:
+
+- a **types-link** deletes the schema declaration *and* the corresponding link
+  on every object of the source type — so it asks you to type the type's name,
+  the same as deleting a type
+- a **sub-type** edge removes the inheritance relation and re-runs the
+  computation on every descendant — likewise confirmed by name
+- everything else is a single-key `y`/`n`
 
 Deleting a **type** requires typing its name, because it removes every object
 of that type. Structural vertices (`root`, `types`, `objects`, `trash_can`, …)
 are refused outright.
+
+Applied and no-op are reported distinctly (`✓` vs `∅`): the client returns
+success for both, and a delete that deleted nothing leaves you where you are.
 
 ---
 
