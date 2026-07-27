@@ -213,24 +213,29 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.helpOpen {
+	// ctrl+c quits from every mode, without exception. It used to quit in two
+	// of them, close in three, and in search fall through into the text input
+	// — so the one key every terminal program shares could not be relied on.
+	if kMsg, isKey := msg.(tea.KeyMsg); isKey && kMsg.String() == "ctrl+c" {
+		return m, tea.Quit
+	}
+
+	switch m.mode() {
+	case modeHelp:
 		if _, isKey := msg.(tea.KeyMsg); isKey {
 			m.helpOpen = false
 		}
 		return m, nil
-	}
-	// A form is modal: it is checked before every other mode.
-	if m.form != nil {
+	case modeForm:
 		return m.updateForm(msg)
-	}
-	if m.queryMode {
+	case modeQuery:
 		return m.updateQuery(msg)
-	}
-	if m.searchMode {
+	case modeSearch:
 		return m.updateSearch(msg)
-	}
-	if m.exportMode {
+	case modeExport:
 		return m.updateExport(msg)
+	case modeResults:
+		return m.updateNavQueryResults(msg)
 	}
 	return m.updateNav(msg)
 }
@@ -238,14 +243,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // ── Normal navigation ─────────────────────────────────────────────────────────
 
 func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if len(m.queryResults) > 0 {
-		return m.updateNavQueryResults(msg)
-	}
-
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "q":
 			return m, tea.Quit
 
 		case "j", "down", "k", "up":
@@ -475,6 +476,7 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "f":
 			m.searchMode = true
+			m.searchPrev = m.searchQuery
 			m.searchInput.SetValue(m.searchQuery)
 			m.searchInput.Focus()
 			return m, textinput.Blink
@@ -580,7 +582,7 @@ func (m tuiModel) updateQuery(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "esc", "ctrl+c":
+		case "esc":
 			m.queryMode = false
 			m.queryInput.Blur()
 			m.queryInput.SetValue("")
@@ -610,16 +612,14 @@ func (m tuiModel) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc":
+			// Cancel the edit, restoring the filter that was active when `f`
+			// was pressed. It used to DESTROY the filter — even though `f`
+			// deliberately pre-seeds the input with it, so the one thing Esc
+			// could not do was leave things as they were found.
 			m.searchMode = false
 			m.searchInput.Blur()
 			m.searchInput.SetValue("")
-			m.searchQuery = ""
-			m.grouped = buildGroupedView(m.links, "")
-			m.rCursor = 0
-			m.lCursor = 0
-			m.rOffset = 0
-			m.lOffset = 0
-			m = m.refreshBody()
+			m = m.applySearch(m.searchPrev)
 			return m, nil
 		case "enter":
 			m.searchQuery = m.searchInput.Value()
@@ -630,14 +630,18 @@ func (m tuiModel) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.searchInput, cmd = m.searchInput.Update(msg)
-	m.searchQuery = m.searchInput.Value()
-	m.grouped = buildGroupedView(m.links, m.searchQuery)
+	return m.applySearch(m.searchInput.Value()), cmd
+}
+
+// applySearch sets the live filter and rebuilds what depends on it.
+func (m tuiModel) applySearch(q string) tuiModel {
+	m.searchQuery = q
+	m.grouped = buildGroupedView(m.links, q)
 	m.rCursor = 0
 	m.lCursor = 0
 	m.rOffset = 0
 	m.lOffset = 0
-	m = m.refreshBody()
-	return m, cmd
+	return m.refreshBody()
 }
 
 // ── Form mode ─────────────────────────────────────────────────────────────────
@@ -739,7 +743,7 @@ func (m tuiModel) jumpTo(id string) (tuiModel, tea.Cmd) {
 // updateCreateMenu turns a letter into the form it names.
 func (m tuiModel) updateCreateMenu(kMsg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := kMsg.String()
-	if k == "esc" || k == "ctrl+c" || k == "q" {
+	if k == "esc" || k == "q" {
 		m.form = nil
 		return m, nil
 	}
@@ -855,9 +859,6 @@ func (m tuiModel) updateExport(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ── Step 1: format selection ──────────────────────────────────────
 		n := len(exportFmts)
 		switch key {
-		case "ctrl+c":
-			m.exportMode = false
-			return m, nil
 		case "esc":
 			m.exportMode = false
 			return m, nil
@@ -877,12 +878,6 @@ func (m tuiModel) updateExport(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── Step 2: depth entry ───────────────────────────────────────────────
 	switch key {
-	case "ctrl+c":
-		m.exportMode = false
-		m.exportDepStep = false
-		m.exportInput.Blur()
-		m.exportInput.SetValue("")
-		return m, nil
 	case "esc":
 		// back to format step
 		m.exportDepStep = false
@@ -927,7 +922,7 @@ func (m tuiModel) updateNavQueryResults(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "q":
 			return m, tea.Quit
 		case "j", "down":
 			if len(m.queryResults) > 0 {

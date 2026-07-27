@@ -325,7 +325,7 @@ func (f formState) handleKey(k string) (formState, formAction) {
 	if f.submitting {
 		// Only cancelling is allowed while a submission is in flight; other
 		// keys would queue edits against state that is about to change.
-		if k == "esc" || k == "ctrl+c" {
+		if k == "esc" {
 			return f, actClose
 		}
 		return f, actNone
@@ -336,7 +336,7 @@ func (f formState) handleKey(k string) (formState, formAction) {
 	}
 
 	switch k {
-	case "ctrl+c", "esc":
+	case "esc":
 		return f, actClose
 
 	case "ctrl+s":
@@ -448,7 +448,7 @@ func (f formState) handleKey(k string) (formState, formAction) {
 
 func (f formState) handleConfirmKey(k string) (formState, formAction) {
 	switch k {
-	case "ctrl+c", "esc":
+	case "esc":
 		return f, actClose
 	}
 	if f.confirmWord == "" {

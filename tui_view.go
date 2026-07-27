@@ -728,23 +728,18 @@ func (m tuiModel) renderStatus() string {
 	case m.errMsg != "":
 		s = hint("r", "retry") + "  " + hint("R", "→ root") + "  " + hint("q", "quit")
 	default:
-		// Deliberately short. There are ~25 bindings now and they cannot all
-		// fit on one line at 80 columns; the full list lives behind `?`.
-		// These are the ones used constantly.
-		parts := []string{
-			hint("jk", "nav"),
-			hint("Enter", "go"),
-			hint("b", "back"),
-			hint("n", "new"),
-			hint("i", "edit"),
-			hint("d", "del"),
+		// Rendered from the keymap's `hint` column. There are ~30 bindings and
+		// they cannot all fit on one line at 80 columns; the rest live behind
+		// `?`. Keeping the short form in the same table as the long one is why
+		// the two can no longer disagree.
+		parts := make([]string, 0, 8)
+		for _, h := range statusHints() {
+			if h == "L:link" && m.linking != nil {
+				h = "L:commit link"
+			}
+			parts = append(parts, hintPair(h))
 		}
-		if m.linking != nil {
-			parts = append(parts, hint("L", "commit link"))
-		} else {
-			parts = append(parts, hint("L", "link"))
-		}
-		parts = append(parts, hint("?", "help"))
+		parts = append(parts, hintPair("?:help"))
 		s = strings.Join(parts, sep)
 	}
 	return styleStatus.Width(m.width).Render(s)
@@ -772,4 +767,13 @@ func truncateCells(s string, max int) string {
 	}
 	b.WriteString("…")
 	return b.String()
+}
+
+// hintPair splits a "key:action" hint and styles the two halves.
+func hintPair(h string) string {
+	k, action, ok := strings.Cut(h, ":")
+	if !ok {
+		return styleHintKey.Render(h)
+	}
+	return hint(k, action)
 }

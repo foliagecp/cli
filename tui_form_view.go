@@ -230,91 +230,42 @@ func renderTagChips(raw string) string {
 
 // ── Help ──────────────────────────────────────────────────────────────────────
 
-type helpEntry struct{ keys, desc string }
-
-type helpSection struct {
-	title   string
-	entries []helpEntry
-}
-
-// helpSections is the single source of truth for what the TUI can do. The
-// status bar only has room for a handful of hints, so anything not listed here
-// is effectively undiscoverable — every new binding belongs in this table.
-var helpSections = []helpSection{
-	{"Navigate", []helpEntry{
-		{"j k  ↑ ↓", "move the cursor"},
-		{"h l  ← →", "switch between the incoming and outgoing panel"},
-		{"Enter", "follow the selected link · expand or collapse a type group"},
-		{"Tab", "collapse or expand the type group"},
-		{"b  Backspace", "back to the previous vertex"},
-		{"R", "jump to root and reset history, search and a pending link"},
-		{"g G", "scroll the body up / down"},
-	}},
-	{"View", []helpEntry{
-		{"v", "toggle raw JSON vs. key-value body"},
-		{"c", "copy the current vertex id to the clipboard"},
-		{"/", "JPGQL query from the current vertex"},
-		{"f", "filter the link lists · Esc clears"},
-		{"e", "export the graph"},
-		{"r", "refresh · ctrl+r also clears the cache"},
-	}},
-	{"Create", []helpEntry{
-		{"n", "new… — what can be created from where you are standing"},
-		{"L", "start a link here · press again at the target to commit"},
-		{"Esc", "cancel a pending link"},
-	}},
-	{"Modify", []helpEntry{
-		{"i", "edit what the cursor is on — the selected link, or the vertex"},
-		{"I", "always the current vertex's body"},
-		{"t", "edit the selected link, starting on its tags"},
-		{"x", "toggle the low-level API (shown as [LL] beside the id)"},
-		{"y", "yank the body on screen, to reuse as a template"},
-	}},
-	{"Delete", []helpEntry{
-		{"d", "delete what the cursor is on — the selected link, or the vertex"},
-		{"D", "always the current vertex"},
-	}},
-	{"Editing a body", []helpEntry{
-		{"ctrl+s", "apply"},
-		{"ctrl+r", "switch MERGE ⇄ REPLACE"},
-		{"ctrl+e", "open $EDITOR"},
-		{"ctrl+t", "paste the yanked body (only when there is one)"},
-		{"Esc", "cancel"},
-	}},
-	{"In a form", []helpEntry{
-		{"Tab  shift+Tab", "next / previous field"},
-		{"← →", "cycle options · swap the link direction"},
-		{"Enter", "next field, or submit on the last one"},
-		{"ctrl+s", "submit from anywhere"},
-		{"Esc", "back a step, or cancel"},
-	}},
-}
-
 // renderHelp draws the full keymap. Two columns when the terminal allows.
 func (m tuiModel) renderHelp() string {
 	keyW := 0
-	for _, sec := range helpSections {
-		for _, e := range sec.entries {
-			if w := lipgloss.Width(e.keys); w > keyW {
-				keyW = w
-			}
+	for _, b := range keymap {
+		if w := lipgloss.Width(b.keys); w > keyW {
+			keyW = w
 		}
 	}
 
 	var blocks []string
-	for _, sec := range helpSections {
-		lines := []string{styleTypeHdr.Render(sec.title)}
-		for _, e := range sec.entries {
-			pad := strings.Repeat(" ", keyW-lipgloss.Width(e.keys))
-			lines = append(lines, "  "+styleHintKey.Render(e.keys)+pad+"  "+styleDim.Render(e.desc))
+	for _, g := range helpGroups {
+		lines := []string{styleTypeHdr.Render(g)}
+		for _, b := range keymap {
+			if b.group != g {
+				continue
+			}
+			pad := strings.Repeat(" ", keyW-lipgloss.Width(b.keys))
+			lines = append(lines, "  "+styleHintKey.Render(b.keys)+pad+"  "+styleDim.Render(b.desc))
+		}
+		if len(lines) == 1 {
+			continue
 		}
 		blocks = append(blocks, strings.Join(lines, "\n"))
 	}
 
-	// Two columns if there is room; the entries are short enough that one
-	// column wastes most of a wide terminal.
+	// Two columns if there is room. The column width is measured from the
+	// content rather than guessed: a fixed guess that is too small silently
+	// clips the longest descriptions, which are the ones most worth reading.
+	descW := 0
+	for _, b := range keymap {
+		if w := lipgloss.Width(b.desc); w > descW {
+			descW = w
+		}
+	}
 	var body string
-	colW := keyW + 46
+	colW := keyW + descW + 6
 	if m.width >= colW*2+4 {
 		half := (len(blocks) + 1) / 2
 		left := lipgloss.NewStyle().Width(colW).Render(strings.Join(blocks[:half], "\n\n"))

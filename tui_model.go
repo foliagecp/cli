@@ -269,6 +269,9 @@ type tuiModel struct {
 	searchMode  bool
 	searchInput textinput.Model
 	searchQuery string
+	// searchPrev is the filter in force when `f` was pressed, so Esc can put
+	// it back instead of destroying it.
+	searchPrev string
 
 	exportMode     bool
 	exportDepStep  bool // false = format selection, true = depth entry
