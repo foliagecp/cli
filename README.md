@@ -198,6 +198,17 @@ Deleting a **type** requires typing its name, because it removes every object
 of that type. Structural vertices (`root`, `types`, `objects`, `trash_can`, …)
 are refused outright.
 
+After a delete you land on the deleted entity's **home** — an object goes up to
+its type, a type to `hub/types` — which is the mirror of the rule that governs
+creation. That is also where the deletion is visible: the entity is no longer
+in the list. Staying put would show its body as though nothing had happened,
+and on a runtime with a trash can that is literally true, because a deleted
+object is parked rather than erased.
+
+Such a runtime re-links the object under `hub/trash_can` with its original type
+and the deletion moment on the edge — so select that link in the trash can and
+the centre panel shows both.
+
 Applied and no-op are reported distinctly (`✓` vs `∅`): the client returns
 success for both, and a delete that deleted nothing leaves you where you are.
 

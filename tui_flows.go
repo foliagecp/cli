@@ -294,6 +294,7 @@ func submitDeleteVertexCmd(f formState) tea.Cmd {
 			msg.clearAll = true
 		} else {
 			msg.invalidate = append([]string{id}, neighbours...)
+			msg.invalidate = append(msg.invalidate, deletionSinks...)
 		}
 		return msg
 	}
@@ -972,4 +973,59 @@ func bodyOrEmpty(f formState, key string) easyjson.JSON {
 		return b
 	}
 	return easyjson.NewJSONObject()
+}
+
+// destinationAfterDelete decides where to stand once the current vertex is
+// gone, and returns the history to keep.
+//
+// It goes to the deleted entity's HOME, which is the mirror of the rule that
+// governs creation: you create a thing where that thing lives, so when it stops
+// existing you are left where it lived. An object goes up to its type, a type
+// up to the types root. That is a place that certainly still exists and that
+// explains the deletion — landing there, the object is visibly no longer in the
+// list.
+//
+// Popping the history instead — which is what this used to do — makes the
+// destination depend on how the user happened to arrive. Walk to an object from
+// a JPGQL result and you would be thrown back to the previous unrelated vertex;
+// arrive by `:` with no history at all and you would be thrown to root.
+//
+// A plain vertex has no home, so for those the history is still the best guess.
+func destinationAfterDelete(ctx formCtx, history []string) (string, []string) {
+	switch {
+	case ctx.entity == entType:
+		return hubID("types"), history
+	case ctx.entity == entObject && ctx.fromType != "":
+		return canonID(ctx.fromType), history
+	}
+	if n := len(history); n > 0 {
+		return history[n-1], history[:n-1]
+	}
+	return hubID("root"), history
+}
+
+// deletionSinks are the built-in vertices a delete can ADD something to.
+//
+// The CLI cannot derive this: where a deleted entity goes is server policy,
+// and the SDK the CLI is pinned against does not model it at all. A runtime
+// with a trash can does NOT erase a live typed object — it cascades the
+// object's links away, keeps the body, and re-links it as
+//
+//	hub/trash_can --__object--> the object
+//	the object    --__type--->  hub/trash_can
+//
+// with the original type and the deletion moment on the trash-can edge. So
+// `hub/objects` LOSES an edge and `hub/trash_can` GAINS one, and neither is a
+// neighbour of the object at the moment the delete is issued — which is why
+// neither was being evicted.
+//
+// That is the whole of "the trash can does not work": it was working, and the
+// browser was replaying a link list captured before the object arrived there.
+// Restarting the TUI appeared to fix it only because that empties the cache.
+//
+// A type delete needs no such list — it cascades into an unbounded number of
+// object deletes and clears the cache outright.
+var deletionSinks = []string{
+	hubID("trash_can"),
+	hubID("objects"),
 }

@@ -385,3 +385,90 @@ func TestDelete_LowLevelModeUsesTheRawAPI(t *testing.T) {
 }
 
 var _ = easyjson.NewJSONObject
+
+// ── Where a delete leaves you, and what it invalidates ────────────────────────
+
+// TestDelete_ObjectGoesUpToItsType. Staying on the deleted object shows its
+// body as though nothing happened — and on a runtime with a trash can that is
+// literally true, because the object is parked rather than erased. The type is
+// where the deletion is visible: the object is no longer in its list.
+func TestDelete_ObjectGoesUpToItsType(t *testing.T) {
+	withOps(t, graphOps{
+		objectDelete: func(string) opResult { return opResult{status: opApplied} },
+	})
+
+	m := makeModel("hub/srv-1", objectVertexLinks(), nil)
+	m.history = []string{"hub/somewhere-unrelated"}
+	m = update(m, key("d"))
+	m, _ = updateCmd(m, key("y"))
+
+	if m.pendingNavAfterDelete != "hub/srv" {
+		t.Errorf("after deleting an object you land on %q, want its type", m.pendingNavAfterDelete)
+	}
+	if len(m.history) != 1 {
+		t.Error("going to the entity's home is not a step back — the history stands")
+	}
+}
+
+func TestDelete_TypeGoesUpToTheTypesRoot(t *testing.T) {
+	withOps(t, graphOps{
+		typeDelete: func(string) opResult { return opResult{status: opApplied} },
+	})
+
+	m := makeModel("hub/srv", typeVertexLinks(), nil)
+	m = update(m, key("d"))
+	for _, r := range "srv" {
+		m = update(m, key(string(r)))
+	}
+	m, _ = updateCmd(m, keyEnter())
+
+	if m.pendingNavAfterDelete != hubID("types") {
+		t.Errorf("after deleting a type you land on %q, want the types root", m.pendingNavAfterDelete)
+	}
+}
+
+func TestDelete_PlainVertexStillFallsBackToTheHistory(t *testing.T) {
+	// A plain vertex has no home, so there is nothing better than where the
+	// user came from.
+	withOps(t, graphOps{
+		vertexDelete: func(string) opResult { return opResult{status: opApplied} },
+	})
+
+	m := makeModel("hub/x", nil, nil)
+	m.history = []string{"hub/parent"}
+	m = update(m, key("x"))
+	m = update(m, key("d"))
+	m, _ = updateCmd(m, key("y"))
+
+	if m.pendingNavAfterDelete != "hub/parent" {
+		t.Errorf("pendingNavAfterDelete = %q, want the history entry", m.pendingNavAfterDelete)
+	}
+}
+
+// TestDelete_EvictsWhereTheDeletedThingWENT is the regression test for "the
+// object is not in the trash can until I restart the terminal".
+//
+// A runtime with a trash can parks the object under hub/trash_can instead of
+// erasing it, so that vertex GAINS an edge and hub/objects LOSES one — and
+// neither is a neighbour of the object at the moment the delete is issued, so
+// neither was being evicted. The browser then replayed a link list captured
+// before the object arrived.
+func TestDelete_EvictsWhereTheDeletedThingWENT(t *testing.T) {
+	withOps(t, graphOps{
+		objectDelete: func(string) opResult { return opResult{status: opApplied} },
+	})
+
+	m := makeModel("hub/srv-1", objectVertexLinks(), nil)
+	m.cache[hubID("trash_can")] = cachedVertex{}
+	m.cache[hubID("objects")] = cachedVertex{}
+
+	m = update(m, key("d"))
+	_, cmd := updateCmd(m, key("y"))
+	next := update(m, runCmd(cmd))
+
+	for _, id := range []string{hubID("trash_can"), hubID("objects")} {
+		if _, stale := next.cache[id]; stale {
+			t.Errorf("%s is still cached — walking there would show the state before the delete", id)
+		}
+	}
+}

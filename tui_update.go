@@ -713,11 +713,7 @@ func (m tuiModel) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// launch of `tui` (and `gwalk inspect`) would fail to load at all.
 		// Decided here, before the delete, while the history is still intact.
 		if f.kind == formDeleteVertex && f.ctx.fromID == m.currentID {
-			m.pendingNavAfterDelete = hubID("root")
-			if n := len(m.history); n > 0 {
-				m.pendingNavAfterDelete = m.history[n-1]
-				m.history = m.history[:n-1]
-			}
+			m.pendingNavAfterDelete, m.history = destinationAfterDelete(f.ctx, m.history)
 		}
 		return m, submitFormCmd(f)
 	case actOpenEditor:
