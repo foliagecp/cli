@@ -196,8 +196,11 @@ func formHints(f *formState) string {
 		// Letter accelerators, not a field form — there is nothing to Tab
 		// between, so nothing claims there is.
 		return "a-z:choose  Esc:cancel"
+	case f.confirm && f.confirmWord != "":
+		// The panel already says which word; the status bar carries the keys.
+		return "Enter:confirm  Esc:cancel"
 	case f.confirm:
-		return "" // renderFormStatus draws its own
+		return "y:delete  n:cancel  Esc:cancel"
 	case f.jsonField() != nil:
 		h := "ctrl+s:apply  ctrl+r:merge/replace  ctrl+e:$EDITOR  Tab:field  Esc:cancel"
 		if f.template != "" {

@@ -782,8 +782,6 @@ func (m tuiModel) renderStatus() string {
 
 	var s string
 	switch {
-	case m.form != nil && m.form.chrome == chromeStatus:
-		return styleStatus.Width(m.width).Render(m.renderFormStatus())
 	case m.form != nil:
 		// A form's own keys. The status bar used to fall through to the browse
 		// hints here, so a form advertised `jk:nav  Enter:go  d:del` while

@@ -167,7 +167,7 @@ func openDeleteVertexForm(m tuiModel) (formState, string) {
 
 	f := formState{
 		kind:    formDeleteVertex,
-		chrome:  chromeStatus,
+		chrome:  chromeCenter,
 		confirm: true,
 		ctx: formCtx{
 			fromID:   id,
@@ -222,7 +222,7 @@ func openDeleteLinkForm(m tuiModel, dl displayLink) formState {
 
 	f := formState{
 		kind:    formDeleteLink,
-		chrome:  chromeStatus,
+		chrome:  chromeCenter,
 		confirm: true,
 		ctx: formCtx{
 			fromID:   owner,

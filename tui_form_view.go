@@ -46,6 +46,10 @@ func (m tuiModel) renderFormCenter(w, h int) string {
 		return ""
 	}
 
+	if f.confirm {
+		return m.renderConfirm(f, w, h)
+	}
+
 	lines := []string{styleTitle.Render(truncateCells(f.title, w)), ""}
 	// Facts the form is ABOUT, as opposed to what it will write: how the edge
 	// is addressed, which cannot be changed here.
@@ -275,23 +279,6 @@ func wrapWords(s string, w int) []string {
 
 // renderFormStatus draws a one-line form in the status bar: confirmations and
 // single-field prompts.
-func (m tuiModel) renderFormStatus() string {
-	f := m.form
-	if f == nil {
-		return ""
-	}
-	sep := styleHintSep.Render("  ")
-
-	if f.confirm {
-		prompt := styleWarn.Render(f.title)
-		if f.confirmWord != "" {
-			return prompt + "  " + f.confirmText + styleHintSep.Render("▏") +
-				sep + styleHintSep.Render("type the name, Enter:confirm  Esc:cancel")
-		}
-		return prompt + sep + styleHintSep.Render("y:confirm  n/Esc:cancel")
-	}
-	return styleTitle.Render(f.title) + sep + styleHintSep.Render("Esc:cancel")
-}
 
 // joinColumns lays blocks out in n columns, filling each to roughly equal
 // height rather than splitting the list in half — the groups differ enough in
@@ -363,4 +350,49 @@ func (m tuiModel) renderJSONField(fl formField, focused bool, w int) []string {
 			styleDim.Render("  preserved (not editable): "+strings.Join(names, " · ")), w))
 	}
 	return out
+}
+
+// renderConfirm draws a destructive confirmation in the centre column.
+//
+// It used to be one line in the status bar, and that line said "type the
+// name". Which name? For a types-link the word is the OWNER TYPE's, because
+// the deletion cascades into every object of it — so typing the LINK's name,
+// the obvious reading, fails every time with no correction on screen. And the
+// whole thing was squeezed onto one row with a long explanation in front of
+// it, so the prompt was the first thing to be truncated away.
+//
+// So: the same place as every other form, the explanation wrapped rather than
+// clipped, and the exact word to type shown next to the box you type it in.
+func (m tuiModel) renderConfirm(f *formState, w, h int) string {
+	lines := []string{styleWarn.Render("⚠  Confirm"), ""}
+	for _, seg := range wrapWords(f.title, w-2) {
+		lines = append(lines, truncateCells("  "+styleMetaVal.Render(seg), w))
+	}
+	lines = append(lines, "")
+
+	if f.confirmWord == "" {
+		lines = append(lines, truncateCells("  "+styleDim.Render("Delete it?"), w))
+	} else {
+		// Naming the word IS the safeguard. Hiding it would not make the
+		// deletion safer, only harder to complete correctly.
+		lines = append(lines, truncateCells("  "+styleDim.Render("Type ")+
+			styleWarn.Render(f.confirmWord)+styleDim.Render(" to confirm:"), w))
+		typed := f.confirmText
+		if typed == "" {
+			typed = styleDim.Render("…")
+		} else if typed == f.confirmWord {
+			typed = styleOk.Render(typed)
+		} else {
+			typed = styleErr.Render(typed)
+		}
+		lines = append(lines, truncateCells("    "+typed+styleHintSep.Render("▏"), w))
+	}
+
+	if f.err != "" {
+		lines = append(lines, "", truncateCells("  "+styleErr.Render("✗ "+f.err), w))
+	}
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines[:h], "\n")
 }

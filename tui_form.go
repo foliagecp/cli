@@ -17,8 +17,7 @@ import (
 type formChrome int
 
 const (
-	chromeStatus formChrome = iota // one line in the status bar
-	chromeCenter                   // the centre column — every form with fields
+	chromeCenter formChrome = iota // the centre column — every form lives here
 )
 
 // ── Fields ────────────────────────────────────────────────────────────────────

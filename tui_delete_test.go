@@ -296,16 +296,64 @@ func TestDelete_RefusedWhileLoading(t *testing.T) {
 	}
 }
 
-func TestDelete_ConfirmationRendersInTheStatusBar(t *testing.T) {
+// TestDelete_ConfirmationNamesTheWordToType is the fix for typing the wrong
+// name and being refused with no explanation.
+//
+// The prompt used to say "type the name" and never say WHICH — and for a
+// types-link the word is the OWNER TYPE's, because the deletion cascades into
+// every object of it, so the obvious reading (the link's own name) fails every
+// time. It was also one line in the status bar behind a long explanation, so
+// the prompt was the first thing truncated away.
+func TestDelete_ConfirmationNamesTheWordToType(t *testing.T) {
+	m := makeModel("hub/srv", typeVertexLinks(), nil)
+	m.width, m.height = 120, 32
+	m = update(m, key("d"))
+	if m.form == nil || m.form.confirmWord != "srv" {
+		t.Fatalf("fixture: want a typed-word confirmation, got %+v", m.form)
+	}
+
+	out := stripANSI(m.renderCenterPanel())
+	if !strings.Contains(out, "Type srv to confirm") {
+		t.Errorf("the prompt must name the exact word:\n%s", out)
+	}
+	if !strings.Contains(out, "every object") {
+		t.Errorf("the blast radius must be readable, not truncated:\n%s", out)
+	}
+	if !strings.Contains(stripANSI(m.renderStatus()), "Enter:confirm") {
+		t.Error("the status bar should carry the confirmation keys")
+	}
+}
+
+func TestDelete_SimpleConfirmationAsksPlainly(t *testing.T) {
 	m := makeModel("hub/srv-1", objectVertexLinks(), nil)
+	m.width, m.height = 120, 32
 	m = update(m, key("d"))
 
-	out := m.renderStatus()
-	if !strings.Contains(out, "hub/srv-1") {
-		t.Errorf("status = %q, want the target named", out)
+	out := stripANSI(m.renderCenterPanel())
+	if !strings.Contains(out, "Delete it?") {
+		t.Errorf("a single-key confirmation should say so:\n%s", out)
 	}
-	if !strings.Contains(out, "y:confirm") {
-		t.Errorf("status = %q, want the confirmation keys", out)
+	if !strings.Contains(stripANSI(m.renderStatus()), "y:delete") {
+		t.Error("the status bar should carry y/n")
+	}
+}
+
+// TestDelete_TypingTheWrongWordShowsItIsWrong. Feedback while typing beats a
+// refusal at the end: the word is on screen next to what you have typed.
+func TestDelete_TypingTheWrongWordShowsItIsWrong(t *testing.T) {
+	m := makeModel("hub/srv", typeVertexLinks(), nil)
+	m.width, m.height = 120, 32
+	m = update(m, key("d"))
+	for _, r := range "wrong" {
+		m = update(m, key(string(r)))
+	}
+
+	out := stripANSI(m.renderCenterPanel())
+	if !strings.Contains(out, "wrong") {
+		t.Errorf("what was typed should be visible:\n%s", out)
+	}
+	if !strings.Contains(out, "Type srv to confirm") {
+		t.Errorf("and so should the word it has to match:\n%s", out)
 	}
 }
 

@@ -228,8 +228,11 @@ does:
   computation on every descendant — likewise confirmed by name
 - everything else is a single-key `y`/`n`
 
-Deleting a **type** requires typing its name, because it removes every object
-of that type. Structural vertices (`root`, `types`, `objects`, `trash_can`, …)
+A cascading delete asks you to type a word, and the confirmation **shows which
+word** next to the box you type it in — for a types-link it is the owner type's
+name, because the deletion reaches every object of that type, which is not the
+name you would guess. Deleting a **type** likewise requires typing its name,
+because it removes every object of that type. Structural vertices (`root`, `types`, `objects`, `trash_can`, …)
 are refused outright.
 
 After a delete you land on the deleted entity's **home** — an object goes up to
