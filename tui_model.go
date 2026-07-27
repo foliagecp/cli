@@ -211,19 +211,30 @@ func linkForItemIn(groups []linkGroup, item flatItem) (displayLink, bool) {
 	return g.links[item.linkIdx], true
 }
 
-// nextSelectable advances the cursor by dir (+1/-1), wrapping around the list.
+// noSelection is the cursor value meaning "no row is picked out".
+//
+// This is the resting state, not an edge case. The panels used to open with
+// row 0 highlighted, which reads as "this group is selected and is what the
+// next key acts on" — while the thing actually under the cursor was the
+// vertex. The highlight was a claim about the subject, and it was false until
+// the user started walking the list.
+const noSelection = -1
+
+// nextSelectable advances the cursor by dir (+1/-1) through the list, cycling
+// back out to noSelection past either end.
+//
+// Wrapping THROUGH the unselected state is deliberate: it means the same key
+// that walks into the link list also walks back out of it to the vertex, so
+// there is nothing extra to learn about how to stop selecting something.
 func nextSelectable(flat []flatItem, from, dir int) int {
 	n := len(flat)
 	if n == 0 {
-		return 0
+		return noSelection
 	}
-	return (from + dir + n) % n
-}
-
-// firstSelectableIdx returns 0; all items in a panel flat list are selectable.
-func firstSelectableIdx(flat []flatItem) int {
-	_ = flat
-	return 0
+	// Positions are -1 (nothing) then 0..n-1, cycled as a ring of n+1.
+	pos := from + 1 + dir
+	pos = (pos + n + 1) % (n + 1)
+	return pos - 1
 }
 
 // ── Panel focus ────────────────────────────────────────────────────────────────
@@ -272,6 +283,13 @@ type tuiModel struct {
 	// searchPrev is the filter in force when `f` was pressed, so Esc can put
 	// it back instead of destroying it.
 	searchPrev string
+
+	// gotoMode is the id prompt. Walking is the normal way to move, but a
+	// browser with no address bar means the only way back to a known vertex is
+	// to remember the path to it — and R, the one shortcut, also resets
+	// everything else.
+	gotoMode  bool
+	gotoInput textinput.Model
 
 	exportMode     bool
 	exportDepStep  bool // false = format selection, true = depth entry
@@ -393,10 +411,25 @@ func (m tuiModel) refreshBody() tuiModel {
 func (m tuiModel) cursorLink() (displayLink, bool) {
 	flat := m.activeFlat()
 	cursor := m.activeCursorVal()
-	if cursor >= len(flat) {
+	if cursor < 0 || cursor >= len(flat) {
 		return displayLink{}, false
 	}
 	return linkForItemIn(m.activeGroups(), flat[cursor])
+}
+
+// cursorGroup returns the group the cursor is on, when it is on a header.
+func (m tuiModel) cursorGroup() (linkGroup, bool) {
+	flat := m.activeFlat()
+	cursor := m.activeCursorVal()
+	if cursor < 0 || cursor >= len(flat) {
+		return linkGroup{}, false
+	}
+	item := flat[cursor]
+	groups := m.activeGroups()
+	if item.kind != flatTypeGroup || item.groupIdx >= len(groups) {
+		return linkGroup{}, false
+	}
+	return groups[item.groupIdx], true
 }
 
 // ── Constructor ───────────────────────────────────────────────────────────────
@@ -414,6 +447,12 @@ func newTuiModel(startID string) tuiModel {
 	si.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
 	si.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
 
+	gi := textinput.New()
+	gi.Placeholder = "vertex id…"
+	gi.CharLimit = 256
+	gi.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
+	gi.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
+
 	ei := textinput.New()
 	ei.Placeholder = "all"
 	ei.CharLimit = 6
@@ -426,6 +465,7 @@ func newTuiModel(startID string) tuiModel {
 		queryInput:  ti,
 		searchInput: si,
 		exportInput: ei,
+		gotoInput:   gi,
 		cache:       make(map[string]cachedVertex),
 		linkDetails: make(map[linkKey]linkDetail),
 		focus:       panelOut,

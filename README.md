@@ -80,19 +80,32 @@ edit key over it is the obvious move.
 | `b` / `Backspace` | Go back (history stack) |
 | `v` | Toggle raw JSON body vs. key-value view |
 | `c` | Copy current vertex ID to clipboard |
+| `:` | Go to a vertex by id · `Tab` cycles the built-in ones |
 | `/` | JPGQL query from current vertex |
 | `f` | Live filter links by name · `Esc` restores the previous filter |
 | `e` | Export graph to file (graphml / dot / json2xml), choose depth |
 | `r` / `Ctrl+R` | Refresh current vertex · also clear the entire cache |
 | `R` | Jump to `root` and reset all state, including a pending link |
 | `g` / `G` | Scroll the body up / down |
-| `x` | Toggle the low-level API — marked `[LL]` beside the id |
+| `x` | Switch the CRUD API between high-level and low-level |
 | `?` | Show the full keymap |
 | `q` / `Ctrl+C` | Quit |
 
 `Esc` always pops one level and never destroys data. `Ctrl+C` quits from
 anywhere. `q` quits while browsing and is an ordinary letter wherever there is
-a text field.
+a text field. Wherever `Tab` cycles something, the status bar says so.
+
+**Nothing is selected when you arrive.** The subject is the vertex, and no row
+in either panel is highlighted — a highlight is a claim about what the next key
+acts on, and until you walk into a list that claim would be false. `j`/`k` walk
+in, and walk back out again past either end.
+
+**The CRUD API is always stated** at the left of the status bar: `CRUD:
+high-level` or `CRUD: low-level`, switched with `x`. It governs create, edit
+and delete — not navigation, which always walks raw edges. Confirmations name
+what they are about to remove (`DELETE TYPE srv`, `Delete OBJECT srv-1`,
+`Delete VERTEX srv with the LOW-LEVEL API`), because the same vertex is very
+different amounts of graph through the two APIs.
 
 The header badge names what you are standing on — `[type]`, `[object of srv]`,
 `[built-in]`, `[vertex]`, or `[object · instance-of link missing]` for a

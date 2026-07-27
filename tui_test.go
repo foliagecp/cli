@@ -62,8 +62,9 @@ func makeModel(currentID string, links []displayLink, fvi *fullVertexInfo) tuiMo
 	m.links = links
 	m.fvi = fvi
 	m.grouped = buildGroupedView(links, "")
-	m.rCursor = firstSelectableIdx(m.grouped.outFlat)
-	m.lCursor = firstSelectableIdx(m.grouped.inFlat)
+	// Nothing selected — the resting state a freshly loaded vertex is in.
+	m.rCursor = noSelection
+	m.lCursor = noSelection
 	m.width = 120
 	m.height = 40
 	m.ready = true
@@ -308,50 +309,45 @@ func TestNextSelectable_Backward(t *testing.T) {
 	}
 }
 
-func TestNextSelectable_WrapForward(t *testing.T) {
+func TestNextSelectable_WrapsOutThroughNothing(t *testing.T) {
 	flat := []flatItem{
 		{kind: flatTypeGroup},
 		{kind: flatLink},
 	}
-	got := nextSelectable(flat, 1, +1)
-	if got != 0 {
-		t.Errorf("from last going +1 should wrap to 0, got %d", got)
+	if got := nextSelectable(flat, 1, +1); got != noSelection {
+		t.Errorf("past the last row should deselect, got %d", got)
+	}
+	if got := nextSelectable(flat, 0, -1); got != noSelection {
+		t.Errorf("before the first row should deselect, got %d", got)
 	}
 }
 
-func TestNextSelectable_WrapBackward(t *testing.T) {
-	flat := []flatItem{
-		{kind: flatTypeGroup},
-		{kind: flatLink},
+// ── nextSelectable ────────────────────────────────────────────────────────────
+
+// A freshly loaded vertex has nothing selected, and the cursor cycles out to
+// that state past either end of the list. The panels used to open with row 0
+// highlighted, which claimed a group was the subject while the vertex actually
+// was — so the highlight was a statement about the subject, and a false one.
+func TestNextSelectable_CyclesThroughNothingSelected(t *testing.T) {
+	flat := []flatItem{{kind: flatTypeGroup}, {kind: flatLink}, {kind: flatLink}}
+
+	if got := nextSelectable(flat, noSelection, +1); got != 0 {
+		t.Errorf("down from nothing = %d, want the first row", got)
 	}
-	got := nextSelectable(flat, 0, -1)
-	if got != 1 {
-		t.Errorf("from 0 going -1 should wrap to last, got %d", got)
+	if got := nextSelectable(flat, 2, +1); got != noSelection {
+		t.Errorf("down from the last row = %d, want nothing selected", got)
+	}
+	if got := nextSelectable(flat, noSelection, -1); got != 2 {
+		t.Errorf("up from nothing = %d, want the last row", got)
+	}
+	if got := nextSelectable(flat, 0, -1); got != noSelection {
+		t.Errorf("up from the first row = %d, want nothing selected", got)
 	}
 }
 
-func TestNextSelectable_Empty(t *testing.T) {
-	got := nextSelectable(nil, 0, +1)
-	if got != 0 {
-		t.Errorf("empty flat: want 0, got %d", got)
-	}
-}
-
-// ── firstSelectableIdx ────────────────────────────────────────────────────────
-
-func TestFirstSelectableIdx_ReturnsZero(t *testing.T) {
-	flat := []flatItem{
-		{kind: flatTypeGroup},
-		{kind: flatLink},
-	}
-	if got := firstSelectableIdx(flat); got != 0 {
-		t.Errorf("want 0, got %d", got)
-	}
-}
-
-func TestFirstSelectableIdx_Empty(t *testing.T) {
-	if got := firstSelectableIdx(nil); got != 0 {
-		t.Errorf("empty: want 0, got %d", got)
+func TestNextSelectable_EmptyListStaysUnselected(t *testing.T) {
+	if got := nextSelectable(nil, noSelection, +1); got != noSelection {
+		t.Errorf("want noSelection, got %d", got)
 	}
 }
 
@@ -619,11 +615,13 @@ func TestNav_jMovesToFirstLink(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", threeLinks(), &fvi)
 	m.focus = panelOut
-	// rCursor starts at 0 (typeGroup header), j moves to first link
+	// Nothing is selected to start with; j enters the list at the group
+	// header, and a second j reaches the first link.
+	m = update(m, key("j"))
 	m = update(m, key("j"))
 	dl, isLink := m.cursorLink()
 	if !isLink {
-		t.Fatal("after j from typeGroup, cursor should be on a flatLink")
+		t.Fatal("two j presses from the resting state should reach a link")
 	}
 	if dl.label() != "l1" {
 		t.Errorf("first link should be l1 (alpha sort), got %q", dl.label())
@@ -634,10 +632,10 @@ func TestNav_kWrapsToLast(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", threeLinks(), &fvi)
 	m.focus = panelOut
-	// k from cursor=0 should wrap to last
+	// k from the resting state enters the list at the bottom.
 	m = update(m, key("k"))
 	if m.rCursor != len(m.grouped.outFlat)-1 {
-		t.Errorf("k from 0 should wrap to last item, got %d", m.rCursor)
+		t.Errorf("k from nothing selected should reach the last row, got %d", m.rCursor)
 	}
 }
 
@@ -645,7 +643,10 @@ func TestNav_jjjWrapsAround(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", threeLinks(), &fvi)
 	m.focus = panelOut
-	total := len(m.grouped.outFlat)
+	// The ring is the rows plus the unselected state, so a full cycle is
+	// one press longer than the list — and it passes back through "nothing
+	// selected", which is how the user gets out of the list with the same key.
+	total := len(m.grouped.outFlat) + 1
 	start := m.rCursor
 	for i := 0; i < total; i++ {
 		m = update(m, key("j"))
@@ -670,8 +671,8 @@ func TestNav_EmptyFlat_NoPanic(t *testing.T) {
 	m := makeModel("root", nil, &fvi)
 	m = update(m, key("j"))
 	m = update(m, key("k"))
-	if m.rCursor < 0 {
-		t.Error("cursor should not go negative")
+	if m.rCursor != noSelection {
+		t.Errorf("with no links there is nothing to select, got %d", m.rCursor)
 	}
 }
 
@@ -685,7 +686,7 @@ func TestNav_jIncomingPanel(t *testing.T) {
 		t.Error("j in incoming panel should move lCursor")
 	}
 	// rCursor should not change
-	if m.rCursor != 0 {
+	if m.rCursor != noSelection {
 		t.Errorf("rCursor should not change when navigating incoming panel, got %d", m.rCursor)
 	}
 }
@@ -715,9 +716,9 @@ func TestNav_EnterOnTypeGroupCollapses(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", threeLinks(), &fvi)
 	m.focus = panelOut
-	// rCursor starts at 0 = typeGroup
+	m = update(m, key("j")) // enter the list; the first row is the group header
 	if m.grouped.outFlat[m.rCursor].kind != flatTypeGroup {
-		t.Skip("cursor not on typeGroup, skipping")
+		t.Fatal("the first row should be a group header")
 	}
 	before := len(m.grouped.outFlat)
 
@@ -748,6 +749,7 @@ func TestNav_TabOnTypeGroupCollapses(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", threeLinks(), &fvi)
 	m.focus = panelOut
+	m = update(m, key("j")) // enter the list
 	if m.grouped.outFlat[m.rCursor].kind != flatTypeGroup {
 		t.Skip("cursor not on typeGroup")
 	}
@@ -764,6 +766,7 @@ func TestNav_TabToggleExpandCollapse(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", threeLinks(), &fvi)
 	m.focus = panelOut
+	m = update(m, key("j")) // enter the list
 	initialLen := len(m.grouped.outFlat)
 
 	m = update(m, keyTab()) // collapse
@@ -1033,9 +1036,10 @@ func TestMsg_LinksLoadedMsg_BuildsGroups(t *testing.T) {
 	if len(m.grouped.outGroups) != 2 {
 		t.Errorf("should have 2 out-groups (contains, depends), got %d", len(m.grouped.outGroups))
 	}
-	// rCursor should be at 0, which is a valid position in outFlat
-	if m.rCursor != 0 {
-		t.Errorf("rCursor should be 0 after load, got %d", m.rCursor)
+	// A freshly loaded vertex has nothing selected: the subject is the vertex,
+	// and a highlighted row would claim otherwise.
+	if m.rCursor != noSelection {
+		t.Errorf("rCursor should be unselected after load, got %d", m.rCursor)
 	}
 }
 
@@ -1153,7 +1157,8 @@ func TestLoadGen_IncrementedOnNavigate(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", threeLinks(), &fvi)
 	m.focus = panelOut
-	m = update(m, key("j")) // move to first link
+	m = update(m, key("j")) // into the list, on the group header
+	m = update(m, key("j")) // onto the first link
 	gen := m.loadGen
 	m = update(m, keyEnter())
 	if m.loadGen != gen+1 {
@@ -1191,9 +1196,9 @@ func TestToggleCollapse_CursorStaysOnGroup(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", threeLinks(), &fvi)
 	m.focus = panelOut
-	// rCursor starts at 0 (flatTypeGroup)
+	m = update(m, key("j")) // enter the list, on the group header
 	if m.grouped.outFlat[m.rCursor].kind != flatTypeGroup {
-		t.Skip("cursor not on typeGroup initially")
+		t.Fatal("the first row should be a group header")
 	}
 	groupItem := m.grouped.outFlat[m.rCursor]
 

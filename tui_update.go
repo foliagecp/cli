@@ -70,8 +70,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = applyRestore(m, m.restore)
 			m.restore = nil
 		} else {
-			m.rCursor = 0
-			m.lCursor = 0
+			m.rCursor = noSelection
+			m.lCursor = noSelection
 			m.rOffset = 0
 			m.lOffset = 0
 		}
@@ -107,8 +107,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.inTypes2 = nil
 		m.grouped = groupedView{}
 		m.linksTotal = len(msg.fvi.outLinks) + len(msg.fvi.inLinks)
-		m.rCursor = 0
-		m.lCursor = 0
+		m.rCursor = noSelection
+		m.lCursor = noSelection
 		m.rOffset = 0
 		m.lOffset = 0
 		m = m.refreshBody()
@@ -143,8 +143,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = applyRestore(m, m.restore)
 			m.restore = nil
 		} else {
-			m.rCursor = 0
-			m.lCursor = 0
+			m.rCursor = noSelection
+			m.lCursor = noSelection
 			m.rOffset = 0
 			m.lOffset = 0
 		}
@@ -253,6 +253,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateSearch(msg)
 	case modeExport:
 		return m.updateExport(msg)
+	case modeGoto:
+		return m.updateGoto(msg)
 	case modeResults:
 		return m.updateNavQueryResults(msg)
 	}
@@ -288,7 +290,7 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			flat := m.activeFlat()
 			cursor := m.activeCursorVal()
-			if cursor >= len(flat) {
+			if cursor < 0 || cursor >= len(flat) {
 				return m, nil
 			}
 			item := flat[cursor]
@@ -308,7 +310,7 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tab":
 			flat := m.activeFlat()
 			cursor := m.activeCursorVal()
-			if cursor >= len(flat) {
+			if cursor < 0 || cursor >= len(flat) {
 				return m, nil
 			}
 			item := flat[cursor]
@@ -460,13 +462,16 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "x":
-			// Force the low-level API. Session state, shown in the header at
-			// all times so it can never be on by surprise.
+			// Which API the CRUD keys use. Session state, and shown in both
+			// positions in the status bar, so the default is a stated choice
+			// rather than an unlabelled one.
 			m.llMode = !m.llMode
 			if m.llMode {
-				m.queryResult = styleDim.Render("low-level API on — typed operations bypassed")
+				m.queryResult = styleDim.Render(
+					"CRUD switched to the low-level API — raw vertices and links, no CMDB semantics")
 			} else {
-				m.queryResult = styleDim.Render("low-level API off")
+				m.queryResult = styleDim.Render(
+					"CRUD switched to the high-level API — types, objects and their links")
 			}
 			return m, nil
 
@@ -493,6 +498,12 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.exportInput.SetValue("")
 			return m, nil
 
+		case ":":
+			m.gotoMode = true
+			m.gotoInput.SetValue("")
+			m.gotoInput.Focus()
+			return m, textinput.Blink
+
 		case "f":
 			m.searchMode = true
 			m.searchPrev = m.searchQuery
@@ -510,8 +521,8 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchQuery = ""
 				m.searchInput.SetValue("")
 				m.grouped = buildGroupedView(m.links, "")
-				m.rCursor = 0
-				m.lCursor = 0
+				m.rCursor = noSelection
+				m.lCursor = noSelection
 				m.rOffset = 0
 				m.lOffset = 0
 				m = m.refreshBody()
@@ -656,8 +667,8 @@ func (m tuiModel) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m tuiModel) applySearch(q string) tuiModel {
 	m.searchQuery = q
 	m.grouped = buildGroupedView(m.links, q)
-	m.rCursor = 0
-	m.lCursor = 0
+	m.rCursor = noSelection
+	m.lCursor = noSelection
 	m.rOffset = 0
 	m.lOffset = 0
 	return m.refreshBody()
@@ -1052,4 +1063,67 @@ func (m tuiModel) openSubjectEditor(subj subject, focusKey string) (tuiModel, te
 	m.form = &f
 	m.queryResult = ""
 	return m, textarea.Blink
+}
+
+// updateGoto handles the id prompt.
+//
+// A graph browser with no address bar means the only way to a vertex you can
+// name is to remember the path there — and R, the sole shortcut, resets the
+// history, the filter and any pending link along with it. This is the one
+// place where typing an id is the right interface rather than a failure of it.
+func (m tuiModel) updateGoto(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if kMsg, isKey := msg.(tea.KeyMsg); isKey {
+		switch kMsg.String() {
+		case "esc":
+			m.gotoMode = false
+			m.gotoInput.Blur()
+			return m, nil
+		case "tab":
+			// Complete to the next structural destination. They are the ids
+			// worth having a shortcut to and the ones hardest to remember the
+			// path back to.
+			m.gotoInput.SetValue(nextGotoSuggestion(m.gotoInput.Value()))
+			m.gotoInput.CursorEnd()
+			return m, nil
+		case "enter":
+			id := strings.TrimSpace(m.gotoInput.Value())
+			m.gotoMode = false
+			m.gotoInput.Blur()
+			if id == "" {
+				return m, nil
+			}
+			if err := validateID("vertex", id); err != nil {
+				m.queryResult = styleErr.Render(err.Error())
+				return m, nil
+			}
+			m.queryResult = ""
+			return m.navigateTo(id)
+		}
+	}
+	var cmd tea.Cmd
+	m.gotoInput, cmd = m.gotoInput.Update(msg)
+	return m, cmd
+}
+
+// gotoSuggestions are the structural vertices, offered because they are the
+// destinations a user most often wants and least often remembers a route to.
+var gotoSuggestions = []string{"root", "types", "objects", "trash_can", "group", "nav"}
+
+func nextGotoSuggestion(cur string) string {
+	cur = strings.TrimSpace(cur)
+	for i, s := range gotoSuggestions {
+		if s == cur || canonID(s) == cur {
+			return gotoSuggestions[(i+1)%len(gotoSuggestions)]
+		}
+	}
+	// Not on the list: start the cycle, unless the user is part-way through
+	// typing one of them, in which case jump to the first match.
+	if cur != "" {
+		for _, s := range gotoSuggestions {
+			if strings.HasPrefix(s, cur) {
+				return s
+			}
+		}
+	}
+	return gotoSuggestions[0]
 }

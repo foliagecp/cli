@@ -33,6 +33,7 @@ const (
 	modeSearch
 	modeExport
 	modeResults // a JPGQL result list is open
+	modeGoto    // typing a vertex id to jump straight to
 )
 
 func (m tuiModel) mode() uiMode {
@@ -47,6 +48,8 @@ func (m tuiModel) mode() uiMode {
 		return modeSearch
 	case m.exportMode:
 		return modeExport
+	case m.gotoMode:
+		return modeGoto
 	case len(m.queryResults) > 0:
 		return modeResults
 	default:
@@ -68,6 +71,8 @@ func (k uiMode) String() string {
 		return "export"
 	case modeResults:
 		return "results"
+	case modeGoto:
+		return "go to"
 	default:
 		return "browse"
 	}
@@ -77,7 +82,7 @@ func (k uiMode) String() string {
 // those, `q` is a letter and quitting is ctrl+c — everywhere else `q` quits.
 func (k uiMode) typesText() bool {
 	switch k {
-	case modeQuery, modeSearch, modeExport, modeForm:
+	case modeQuery, modeSearch, modeExport, modeForm, modeGoto:
 		return true
 	}
 	return false

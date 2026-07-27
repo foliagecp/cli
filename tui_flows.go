@@ -183,11 +183,23 @@ func openDeleteVertexForm(m tuiModel) (formState, string) {
 		},
 	}
 
-	if entity == entType {
+	// The title names WHAT is being deleted, not just which id — the same
+	// vertex is a "type" through the CMDB API and a bare "vertex" through the
+	// low-level one, and those remove very different amounts of graph.
+	switch {
+	case entity == entType:
 		f.confirmWord = stripDomain(id)
 		f.title = "DELETE TYPE " + id + " — this also removes every object of this type."
-	} else {
-		f.title = "Delete " + entityLabel(entity) + " " + id + "?"
+	case entity == entObject:
+		f.title = "Delete OBJECT " + id + " (of " + typeName + ")?"
+	case m.llMode && kind != vkPlain:
+		// Standing on something the CMDB knows about, with the low-level API
+		// armed. Say so: this removes the vertex and its edges, and leaves the
+		// CMDB's idea of it behind.
+		f.title = "Delete VERTEX " + id + " with the LOW-LEVEL API — " +
+			"the CMDB " + kind.label(typeName) + " record is not cleaned up."
+	default:
+		f.title = "Delete vertex " + id + "?"
 	}
 	f.ctx.toID = strings.Join(neighbours, " ") // carried for invalidation
 	return f, ""

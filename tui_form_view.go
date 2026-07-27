@@ -68,19 +68,7 @@ func (m tuiModel) renderFormFull() string {
 		preserved = styleDim.Render("preserved (not editable): " + strings.Join(names, " · "))
 	}
 
-	sep := styleHintSep.Render("  ")
-	hintParts := []string{
-		hint("ctrl+s", "apply"),
-		hint("ctrl+r", "merge/replace"),
-		hint("ctrl+e", "$EDITOR"),
-	}
-	// Only advertised when there is something to paste. A key that does
-	// nothing is worse than a key that is not mentioned.
-	if f.template != "" {
-		hintParts = append(hintParts, hint("ctrl+t", "paste yank"))
-	}
-	hintParts = append(hintParts, hint("Esc", "cancel"))
-	hints := strings.Join(hintParts, sep)
+	hints := renderHintLine(formHints(f))
 
 	rows := []string{title}
 	// Context the edge is addressed BY, and cannot be changed here: the API
@@ -196,6 +184,16 @@ func (m tuiModel) renderFormCenter(w, h int) string {
 
 	if f.err != "" {
 		lines = append(lines, "", truncateCells(styleErr.Render("✗ "+f.err), w))
+	}
+
+	// The form's own keys, in the panel. The status bar carries them too, but
+	// the panel is where the user is looking, and Tab moving between fields is
+	// not guessable from a list of labels.
+	if hints := formHints(f); hints != "" {
+		for len(lines) < h-1 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, truncateCells(renderHintLine(hints), w))
 	}
 
 	for len(lines) < h {

@@ -262,9 +262,13 @@ func (m tuiModel) renderPanelLinks(groups []linkGroup, flat []flatItem, cursor, 
 			namePad := strings.Repeat(" ", nameMax-lipgloss.Width(rawName))
 
 			if selected {
+				// No marker of its own: the highlight already says "selected",
+				// and the ► that used to sit here is a near-twin of the ▸ a
+				// collapsed GROUP shows — so a selected link looked like
+				// something Tab would expand.
 				dispName := highlightMatches(rawName, m.searchQuery) + namePad
 				dispTarget := highlightMatches(truncateCells(tgt, targetMax), m.searchQuery)
-				plain := "  ► " + dispName + " → " + dispTarget
+				plain := "    " + dispName + " → " + dispTarget
 				lines = append(lines, styleSelected.Width(w).Render(plain))
 			} else {
 				var arrowStr string
@@ -736,12 +740,28 @@ func hint(key, desc string) string {
 func (m tuiModel) renderStatus() string {
 	sep := styleHintSep.Render("  ")
 
+	// lead is what stays on the line even when a notice needs the whole of it.
+	lead := ""
+	if m.mode() == modeBrowse {
+		lead = m.crudModeChip()
+	}
+
 	var s string
 	switch {
 	case m.form != nil && m.form.chrome == chromeStatus:
 		return styleStatus.Width(m.width).Render(m.renderFormStatus())
+	case m.form != nil:
+		// A form's own keys. The status bar used to fall through to the browse
+		// hints here, so a form advertised `jk:nav  Enter:go  d:del` while
+		// every one of those keys was going into a text field.
+		s = styleWarn.Render(truncateCells(m.form.title, m.width/2)) +
+			styleHintSep.Render("   ") + renderHintLine(formHints(m.form))
+	case m.gotoMode:
+		s = "Go to: " + m.gotoInput.View() +
+			styleHintSep.Render("  ") + renderHintLine(modeHints(modeGoto))
 	case m.queryMode:
-		s = "Query: " + m.queryInput.View() + styleHintSep.Render("  Esc:cancel")
+		s = "Query: " + m.queryInput.View() +
+			styleHintSep.Render("  ") + renderHintLine(modeHints(modeQuery))
 	case m.exportMode && !m.exportDepStep:
 		parts := make([]string, len(exportFmts))
 		for i, f := range exportFmts {
@@ -774,7 +794,7 @@ func (m tuiModel) renderStatus() string {
 			styleHintSep.Render("  Tab:preset  Enter:export  Esc:back")
 	case m.searchMode:
 		s = "Search: " + m.searchInput.View() +
-			styleHintSep.Render("  Enter:keep  Esc:restore")
+			styleHintSep.Render("  ") + renderHintLine(modeHints(modeSearch))
 	case len(m.queryResults) > 0:
 		s = strings.Join([]string{
 			hint("jk", "navigate"),
@@ -783,39 +803,29 @@ func (m tuiModel) renderStatus() string {
 			hint("q", "quit"),
 		}, sep)
 	default:
-		parts := make([]string, 0, 10)
-		if m.searchQuery != "" {
-			parts = append(parts, styleSearch.Render(" /"+m.searchQuery+" "))
-		}
-		// Rendered from the keymap's `hint` column. There are ~30 bindings and
-		// they cannot all fit on one line at 80 columns; the rest live behind
-		// `?`. Keeping the short form in the same table as the long one is why
-		// the two can no longer disagree.
-		for _, h := range statusHints() {
-			if h == "L:link" && m.linking != nil {
-				h = "L:commit link"
-			}
-			parts = append(parts, hintPair(h))
-		}
-		parts = append(parts, hintPair("?:help"))
-		s = strings.Join(parts, sep)
+		s = m.browseHintLine(lead, sep, noticeWidth(m))
 	}
 
-	// The notice rides alongside, and is clipped rather than allowed to push
-	// the hints off the line. An error outranks a toast: it is the one the
-	// user needs and the one that used to be unreachable.
+	// The notice rides alongside the hints. An error outranks a toast: it is
+	// the one the user needs and the one that used to be reachable from
+	// nowhere on screen.
 	notice := m.queryResult
 	if m.errMsg != "" {
 		notice = styleErr.Render("⚠ " + m.errMsg)
 	}
 	if notice != "" {
+		const readable = 24 // below this a message is a stub, not information
 		room := m.width - lipgloss.Width(s) - 5
-		if room >= 8 {
-			s += sep + styleHintSep.Render("↳ ") + truncateCells(notice, room)
-		} else {
-			// Too narrow to show both. The notice is the news; the hints are
-			// always one `?` away.
-			s = styleHintSep.Render("↳ ") + truncateCells(notice, m.width-4)
+		if room < readable {
+			// Not enough line for both. The notice wins: the hints are always
+			// one `?` away, and a message clipped to six cells tells nobody
+			// anything. The mode chip stays — it is one word and it is the
+			// context the message is read in.
+			s = lead
+			room = m.width - lipgloss.Width(s) - 5
+		}
+		if room > 0 {
+			s += styleHintSep.Render("  ↳ ") + truncateCells(notice, room)
 		}
 	}
 	return styleStatus.Width(m.width).Render(truncateCells(s, m.width-2))
@@ -877,10 +887,90 @@ func truncateCells(s string, max int) string {
 }
 
 // hintPair splits a "key:action" hint and styles the two halves.
+//
+// Split on the LAST colon, not the first: one of the keys IS a colon, and
+// cutting at the first one rendered it as a hint with no key at all.
 func hintPair(h string) string {
-	k, action, ok := strings.Cut(h, ":")
-	if !ok {
+	i := strings.LastIndex(h, ":")
+	if i < 0 {
 		return styleHintKey.Render(h)
 	}
-	return hint(k, action)
+	return hint(h[:i], h[i+1:])
+}
+
+// renderHintLine styles a "key:action  key:action" string.
+func renderHintLine(s string) string {
+	if s == "" {
+		return ""
+	}
+	parts := strings.Fields(s)
+	out := make([]string, len(parts))
+	for i, p := range parts {
+		out[i] = hintPair(p)
+	}
+	return strings.Join(out, styleHintSep.Render("  "))
+}
+
+// crudModeChip names which API the next create, edit or delete will use.
+//
+// Navigation is always low-level — it walks raw edges — so this deliberately
+// says CRUD rather than claiming to be a mode for the whole interface.
+func (m tuiModel) crudModeChip() string {
+	if m.llMode {
+		return styleWarn.Render(" CRUD: low-level ")
+	}
+	return styleDim.Render(" CRUD: high-level ")
+}
+
+// noticeWidth is how much of the line a pending toast or error should be
+// allowed to claim.
+func noticeWidth(m tuiModel) int {
+	if m.errMsg == "" && m.queryResult == "" {
+		return 0
+	}
+	w := m.width / 3
+	if w > 44 {
+		w = 44
+	}
+	return w
+}
+
+// browseHintLine packs as many hints as the terminal has room for.
+//
+// There are more bindings than fit on one line at 80 columns, so something has
+// to give. Dropping the ones that fit least well, in a fixed order the user
+// can learn, beats the alternatives: truncating mid-hint produces a keymap
+// nobody trusts, and wrapping adds a row no height calculation accounts for
+// and pushes the top of the frame out of the screen.
+//
+// The CRUD chip and `?:help` are never dropped — one is the mode every write
+// depends on, the other is where everything that did get dropped still lives.
+func (m tuiModel) browseHintLine(lead, sep string, reserved int) string {
+	sepW := lipgloss.Width(sep)
+	help := hintPair("?:help")
+
+	budget := m.width - 2 - reserved
+	used := lipgloss.Width(lead) + sepW + lipgloss.Width(help)
+
+	parts := []string{lead}
+	if m.searchQuery != "" {
+		chip := styleSearch.Render(" /" + m.searchQuery + " ")
+		used += sepW + lipgloss.Width(chip)
+		parts = append(parts, chip)
+	}
+
+	for _, h := range browseHintsFor(m.activeCursorVal() >= 0) {
+		if h == "L:link" && m.linking != nil {
+			h = "L:commit link"
+		}
+		rendered := hintPair(h)
+		w := sepW + lipgloss.Width(rendered)
+		if used+w > budget {
+			continue
+		}
+		used += w
+		parts = append(parts, rendered)
+	}
+	parts = append(parts, help)
+	return strings.Join(parts, sep)
 }
