@@ -18,8 +18,7 @@ type formChrome int
 
 const (
 	chromeStatus formChrome = iota // one line in the status bar
-	chromeCenter                   // replaces the centre panel's body
-	chromeFull                     // owns the whole screen
+	chromeCenter                   // the centre column — every form with fields
 )
 
 // ── Fields ────────────────────────────────────────────────────────────────────
@@ -53,6 +52,13 @@ type formField struct {
 	boolVal bool
 	static  string      // fieldStatic
 	json    *jsonEditor // fieldJSON
+
+	// showIfKey/showIfVal make a field conditional: it is rendered, focusable
+	// and validated only while another field holds that value. A form that
+	// shows a field the current choice makes meaningless is asking the user to
+	// fill in something it intends to ignore.
+	showIfKey string
+	showIfVal string
 
 	err string // set by validate(); "" == valid
 }
@@ -192,6 +198,22 @@ func (f formState) editor() *jsonEditor {
 	return nil
 }
 
+// nonJSONRows counts the rows the form's other content takes, so the editor
+// can be sized to what is left.
+func (f formState) nonJSONRows() int {
+	n := len(f.contextRows)
+	for _, fl := range f.fields {
+		if fl.kind == fieldJSON {
+			continue
+		}
+		n++
+		if fl.err != "" || fl.hint != "" {
+			n++
+		}
+	}
+	return n
+}
+
 // jsonField returns the form's JSON editor regardless of what has focus. A form
 // has at most one.
 //
@@ -211,11 +233,19 @@ func (f formState) jsonField() *jsonEditor {
 }
 
 // ok reports whether the form may be submitted.
+// visible reports whether a conditional field currently applies.
+func (f formState) visible(fl formField) bool {
+	return fl.showIfKey == "" || f.value(fl.showIfKey) == fl.showIfVal
+}
+
 func (f formState) ok() bool {
 	if f.err != "" {
 		return false
 	}
 	for _, fl := range f.fields {
+		if !f.visible(fl) {
+			continue
+		}
 		if fl.err != "" {
 			return false
 		}
@@ -233,6 +263,10 @@ func (f formState) ok() bool {
 
 func (f formState) validate() formState {
 	for i := range f.fields {
+		if !f.visible(f.fields[i]) {
+			f.fields[i].err = ""
+			continue
+		}
 		f.fields[i].err = validateField(f.fields[i])
 	}
 	return f
@@ -496,7 +530,7 @@ func (f formState) nextField(dir int) int {
 	i := f.cur
 	for range f.fields {
 		i = (i + dir + n) % n
-		if f.fields[i].focusable() {
+		if f.fields[i].focusable() && f.visible(f.fields[i]) {
 			return i
 		}
 	}
@@ -505,6 +539,9 @@ func (f formState) nextField(dir int) int {
 
 func (f formState) lastFieldIdx() int {
 	for i := len(f.fields) - 1; i >= 0; i-- {
+		if !f.visible(f.fields[i]) {
+			continue
+		}
 		if f.fields[i].focusable() {
 			return i
 		}

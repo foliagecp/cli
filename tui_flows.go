@@ -46,7 +46,7 @@ func openBodyEditForm(m tuiModel) (formState, bool) {
 	f := formState{
 		kind:     formBodyEdit,
 		title:    fmt.Sprintf("Edit %s body — %s", entityLabel(entity), m.currentID),
-		chrome:   chromeFull,
+		chrome:   chromeCenter,
 		template: m.bodyRegister,
 		ctx: formCtx{
 			fromID:   m.currentID,
@@ -349,12 +349,26 @@ func openLinkCreateForm(m tuiModel) (formState, string) {
 	switch tier {
 	case tierTypesLink:
 		f.ctx.entity = entTypesLink
+		// Two types can be related in two entirely different ways, and the
+		// form used to silently assume one of them. A types-link is a SCHEMA
+		// declaration — it permits object-links between instances; a sub-type
+		// is INHERITANCE. Nothing about walking from one type to another says
+		// which the user meant, so the form asks.
 		fields = append(fields, formField{
+			key: "relation", label: "relation", kind: fieldEnum, required: true,
+			options: []enumOption{
+				{label: "types-link", value: relTypesLink,
+					hint: "objects of these types may then be linked"},
+				{label: "sub-type", value: relSubType,
+					hint: "the target inherits from " + stripDomain(m.linking.fromID)},
+			},
+		}, formField{
 			key: "olt", label: "object link type", kind: fieldID, required: true,
 			// Naming it after the target type is the convention the server
 			// itself falls back to for link names.
-			value: stripDomain(m.currentID),
-			hint:  "the link type that object-links between instances will get",
+			value:     stripDomain(m.currentID),
+			hint:      "the link type that object-links between instances will get",
+			showIfKey: "relation", showIfVal: relTypesLink,
 		})
 	case tierObjectsLink:
 		fields = append(fields, formField{
@@ -393,10 +407,18 @@ func openLinkCreateForm(m tuiModel) (formState, string) {
 		})
 	}
 
-	fields = append(fields,
-		formField{key: "tags", label: "tags", kind: fieldTags},
-		formField{key: "body", label: "body", kind: fieldText,
-			hint: "inline JSON, or leave blank"})
+	// A sub-type declaration carries neither; showing them would invite input
+	// the operation has nowhere to put.
+	tagsAndBody := []formField{
+		{key: "tags", label: "tags", kind: fieldTags},
+		{key: "body", label: "body", kind: fieldText, hint: "inline JSON, or leave blank"},
+	}
+	if tier == tierTypesLink {
+		for i := range tagsAndBody {
+			tagsAndBody[i].showIfKey, tagsAndBody[i].showIfVal = "relation", relTypesLink
+		}
+	}
+	fields = append(fields, tagsAndBody...)
 	f.fields = fields
 	f.cur = 1 // the endpoints row is informational; start on the first input
 
@@ -417,6 +439,12 @@ func lastLinkTypeOn(m tuiModel, from string) string {
 	}
 	return ""
 }
+
+// The two ways two types can be related.
+const (
+	relTypesLink = "types-link"
+	relSubType   = "sub-type"
+)
 
 func submitLinkCreateCmd(f formState) tea.Cmd {
 	from, to := f.ctx.fromID, f.ctx.toID
@@ -441,6 +469,8 @@ func submitLinkCreateCmd(f formState) tea.Cmd {
 		((fromClaim != "" && fromClaim != f.ctx.fromType) ||
 			(toClaim != "" && toClaim != f.ctx.toType))
 
+	subType := f.value("relation") == relSubType
+
 	return func() tea.Msg {
 		if bodyErr != "" {
 			return mutationResultMsg{
@@ -453,6 +483,9 @@ func submitLinkCreateCmd(f formState) tea.Cmd {
 			op  string
 		)
 		switch {
+		case tier == tierTypesLink && subType:
+			op = "type.subtype.add"
+			res = ops.subTypeSet(from, to)
 		case tier == tierTypesLink:
 			op = "typeslink.create"
 			res = ops.typesLinkCreate(from, to, olt, tags, body)
@@ -536,6 +569,9 @@ func createMenuFor(m tuiModel) []menuEntry {
 	typesRoot := hubID("types")
 
 	linkLabel := "link — start here, walk to the target, press L again"
+	if kind == vkType {
+		linkLabel = "types-link or sub-type — start here, walk to the other type, press L again"
+	}
 	if m.linking != nil {
 		linkLabel = "link — commit: " + stripDomain(m.linking.fromID) + " ──▶ " + bare
 	}
@@ -572,7 +608,6 @@ func createMenuFor(m tuiModel) []menuEntry {
 	switch {
 	case kind == vkType:
 		out = append(out, menuEntry{key: "o", label: "object of " + bare, kind: formObjectCreate})
-		out = append(out, menuEntry{key: "s", label: "sub-type of " + bare, kind: formSubTypeSet})
 	case kind == vkObject && typeName != "":
 		out = append(out, menuEntry{
 			key: "o", label: "object of " + typeName,
@@ -823,13 +858,13 @@ func openLinkEditForm(m tuiModel, dl displayLink, focusKey string) (formState, s
 	tier := m.tierOfSubjectLink(dl)
 	entity := entityForTier(tier)
 
-	w, h := m.editorSizeFor(len(linkEditContextRows(dl, tier)) + 2)
+	w, h := m.editorSizeFor(len(linkEditContextRows(dl, tier)) + 3)
 	ed := newJSONEditor(detail.body, entity, w, h)
 
 	f := formState{
 		kind:        formLinkEdit,
 		title:       "Edit " + tier.noun() + " — " + stripDomain(owner) + " ──▶ " + stripDomain(target),
-		chrome:      chromeFull,
+		chrome:      chromeCenter,
 		contextRows: linkEditContextRows(dl, tier),
 		template:    m.bodyRegister,
 		ctx: formCtx{

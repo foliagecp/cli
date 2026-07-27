@@ -31,7 +31,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.form != nil {
 			if ed := m.form.jsonField(); ed != nil {
-				ed.setSize(m.editorSizeFor(len(m.form.contextRows) + 2))
+				ed.setSize(m.editorSizeFor(m.form.nonJSONRows()))
 			}
 		}
 		return m, nil

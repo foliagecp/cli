@@ -154,8 +154,13 @@ func TestLink_TypesLinkFormAsksForTheObjectLinkType(t *testing.T) {
 	if m.form == nil {
 		t.Fatal("L should open the link form")
 	}
-	if !strings.Contains(m.form.title, "types-link") {
-		t.Errorf("title = %q, want it to name the API tier", m.form.title)
+	// The title stays neutral because the form ASKS which of the two relations
+	// this is, and the answer can change while it is open.
+	if !strings.Contains(m.form.title, "types") {
+		t.Errorf("title = %q, want it to name what is being related", m.form.title)
+	}
+	if got := m.form.value("relation"); got != relTypesLink {
+		t.Errorf("relation defaults to %q, want %q", got, relTypesLink)
 	}
 	if _, ok := m.form.field("olt"); !ok {
 		t.Error("a types-link declares the object-link type; the field must be present")
@@ -616,26 +621,5 @@ func TestObjectAndTypeCreate_LandOnWhatWasCreated(t *testing.T) {
 	_, cmd = updateCmd(m, tea_ctrlS())
 	if got := runCmd(cmd).(mutationResultMsg).navTo; got != "hub/srv-1" {
 		t.Errorf("after creating an object navTo = %q, want hub/srv-1", got)
-	}
-}
-
-func TestSubType_DeclaredFromTheParentType(t *testing.T) {
-	var base, child string
-	withOps(t, graphOps{
-		subTypeSet: func(b, c string) opResult { base, child = b, c; return opResult{status: opApplied} },
-	})
-
-	m := makeModel("hub/hw", typeAt("hub/hw"), nil)
-	m = update(m, key("n"))
-	m = update(m, key("s"))
-	if m.form == nil || m.form.kind != formSubTypeSet {
-		t.Fatalf("s on a type should open the sub-type form, got %+v", m.form)
-	}
-	m = typeText(m, "srv")
-	_, cmd := updateCmd(m, tea_ctrlS())
-	runCmd(cmd)
-
-	if base != "hub/hw" || child != "srv" {
-		t.Errorf("subTypeSet(%q,%q), want (hub/hw, srv)", base, child)
 	}
 }

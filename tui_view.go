@@ -310,10 +310,17 @@ func (m tuiModel) renderCenterPanel() string {
 			" " + styleMetaKey.Render("["+m.tierOfSubjectLink(subj.link).noun()+"]")
 	}
 
+	// A form takes the WHOLE centre column — no divider, no type map. It needs
+	// the room, and the type map describes a vertex the user has stopped
+	// looking at.
+	if m.form != nil && m.form.chrome == chromeCenter {
+		// The form owns the column and writes its own header; a second title
+		// naming the subject would just repeat what the form already says.
+		return stylePanelActive.Width(cw).Height(ch).Render(m.renderFormCenter(cw, ch))
+	}
+
 	var body string
 	switch {
-	case m.form != nil && m.form.chrome == chromeCenter:
-		body = m.renderFormCenter(cw, m.vpHeight())
 	case len(m.queryResults) > 0:
 		body = m.renderQueryResults(cw, m.vpHeight())
 	case subj.kind == subjLink:
@@ -619,11 +626,6 @@ func (m tuiModel) View() string {
 	if m.helpOpen {
 		return m.renderHelp()
 	}
-	// A full-screen form owns the whole window; it needs the room, and the
-	// narrow fallback has no centre panel to host anything smaller.
-	if m.form != nil && m.form.chrome == chromeFull {
-		return m.renderFormFull()
-	}
 	if m.isNarrow() {
 		return m.viewNarrow()
 	}
@@ -741,8 +743,17 @@ func (m tuiModel) renderBreadcrumbs() string {
 	}
 
 	banner := styleWarn.Render(" ◆ LINK PENDING ") + "  " +
-		styleMetaVal.Render(from) + styleOut.Render("  ──▶  ") + target +
-		styleHintSep.Render("   ") + hint("L", "commit") + styleHintSep.Render("  ") + hint("Esc", "cancel")
+		styleMetaVal.Render(from) + styleOut.Render("  ──▶  ") + target
+
+	// Only offer the exits while they ARE the exits. Once the form is open the
+	// commit is being filled in, and L is an ordinary letter going into a text
+	// field — telling the user to press it there is telling them to type it.
+	if m.form == nil {
+		banner += styleHintSep.Render("   ") + hint("L", "commit") +
+			styleHintSep.Render("  ") + hint("Esc", "cancel")
+	} else {
+		banner += styleHintSep.Render("   filling it in — ") + hint("ctrl+s", "create")
+	}
 
 	return lipgloss.NewStyle().Width(m.width).Render(truncateCells(banner, m.width))
 }
@@ -777,8 +788,10 @@ func (m tuiModel) renderStatus() string {
 		// A form's own keys. The status bar used to fall through to the browse
 		// hints here, so a form advertised `jk:nav  Enter:go  d:del` while
 		// every one of those keys was going into a text field.
-		s = styleWarn.Render(truncateCells(m.form.title, m.width/2)) +
-			styleHintSep.Render("   ") + renderHintLine(formHints(m.form))
+		//
+		// The form's TITLE is not repeated: the panel is showing it, two rows
+		// up, in larger type.
+		s = renderHintLine(formHints(m.form))
 	case m.gotoMode:
 		s = "Go to: " + m.gotoInput.View() +
 			styleHintSep.Render("  ") + renderHintLine(modeHints(modeGoto))
@@ -1025,4 +1038,15 @@ func (m tuiModel) linkKeyAction() string {
 	default:
 		return "start link"
 	}
+}
+
+// splitHints breaks a hint line on runs of two or more spaces.
+func splitHints(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, "  ") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

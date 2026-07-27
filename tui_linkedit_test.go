@@ -215,7 +215,7 @@ func TestLinkEdit_RendersWithFocusOnTags(t *testing.T) {
 	m := linkWithDetail(t, rawLink(), []string{"prod"}, numBody("w", 1))
 	m = update(m, key("t"))
 
-	out := stripANSI(m.renderFormFull())
+	out := stripANSI(m.renderFormCenter(m.centerContentW(), m.panelContentH()-1))
 	if strings.Contains(out, "form has no editor") {
 		t.Fatalf("the editor must be found regardless of focus:\n%s", out)
 	}
@@ -228,7 +228,7 @@ func TestLinkEdit_ShowsWhatItCannotChange(t *testing.T) {
 	m := linkWithDetail(t, rawLink(), nil, easyjson.NewJSONObject())
 	m = update(m, key("i"))
 
-	out := stripANSI(m.renderFormFull())
+	out := stripANSI(m.renderFormCenter(m.centerContentW(), m.panelContentH()-1))
 	for _, want := range []string{"endpoints", "name", "l1", "via"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the form must state %q — it is how the edge is addressed:\n%s", want, out)
@@ -518,7 +518,7 @@ func TestTemplate_NotAdvertisedWithNothingToPaste(t *testing.T) {
 	m := makeModel("hub/a", nil, &fvi)
 	m = update(m, key("i"))
 
-	if strings.Contains(stripANSI(m.renderFormFull()), "ctrl+t") {
+	if strings.Contains(stripANSI(m.renderFormCenter(m.centerContentW(), m.panelContentH()-1)), "ctrl+t") {
 		t.Error("a key that would do nothing must not be offered")
 	}
 }

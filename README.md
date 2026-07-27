@@ -161,8 +161,9 @@ that commit across every keystroke since it appeared — where the cursor
 happens to rest must not change what the screen said it would do.
 
 **You create a thing where that thing lives.** Types are created from
-`hub/types`, objects from their own type, sub-types from the parent type, and a
-raw vertex is always attached to the vertex you create it from. This is not
+`hub/types`, objects from their own type, and a raw vertex is always attached
+to the vertex you create it from. A relation between two types — schema or
+inheritance — is made with `L`, by walking from one to the other. This is not
 ceremony: the TUI finds things by walking the graph, so anything created
 outside its home would be unreachable by the very tool that made it. After a
 successful create you are moved onto the new entity.
@@ -183,10 +184,18 @@ mode you can edit types-links, objects-links, claimed-type object links and
 sub-type edges — the ones the CMDB owns — and a raw link between plain vertices
 is refused until you press `x`.
 
-Which API the link goes through is derived from the endpoints and shown in the
-form title: type→type creates a **types-link** (a schema declaration),
-object→object an **objects-link**, and anything else a **raw link**. Inside the
-form `←`/`→` swaps the direction.
+Which API the link goes through is derived from the endpoints: object→object
+creates an **objects-link**, and anything else a **raw link**. Inside the form
+`←`/`→` swaps the direction.
+
+Two **types** can be related in two entirely different ways, so the form asks
+which — `←`/`→` on the `relation` row:
+
+- **types-link** — a schema declaration: objects of these types may then be
+  linked, under the object-link type you name
+- **sub-type** — inheritance: the target inherits from the source
+
+Whichever you pick, the form shows only the fields that apply to it.
 
 An objects-link form also offers **from as** / **to as**, prefilled with the
 endpoints' real types. Naming a super-type of either instead links the two
@@ -201,8 +210,10 @@ to both with a single flag. The form is built from a read of the link, never
 from the list view — the list deliberately does not fetch tags or bodies, and a
 form seeded from it would show blanks over real data.
 
-Inside the body editor: `Ctrl+S` apply · `Ctrl+R` switch MERGE ⇄ REPLACE ·
-`Ctrl+E` open `$EDITOR` · `Ctrl+T` paste the yanked body · `Esc` cancel. JSON is
+Every form — creating, editing, the body editor — appears in the **centre
+column**, which is where the subject lives. Inside the body editor: `Ctrl+S`
+apply · `Ctrl+R` switch MERGE ⇄ REPLACE · `Ctrl+E` open `$EDITOR` for more
+room · `Ctrl+T` paste the yanked body · `Esc` cancel. JSON is
 validated as you type and submission is blocked while it is invalid.
 Machine-owned paths (`triggers`, `cache`, a types-link's `type`, …) are held
 aside and listed under the editor, so nothing is lost.

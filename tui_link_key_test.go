@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/foliagecp/easyjson"
 )
 
@@ -195,5 +196,110 @@ func TestTier_ResolvesTheFarEndpointWhenTheEdgeCannot(t *testing.T) {
 	userTyped := displayLink{info: makeLinkInfo("hub/srv-1", "rack-a", "hub/rack-a", "mounted_in"), isOut: true}
 	if _, settled := inferFarKind(userTyped); settled {
 		t.Error("a user-typed edge cannot say what it connects — it must be read")
+	}
+}
+
+// ── Relating two types ────────────────────────────────────────────────────────
+
+// twoTypes stands on a type with another one pending, which is the state L
+// commits from.
+func twoTypes(t *testing.T) tuiModel {
+	t.Helper()
+	m := makeModel("hub/srv", []displayLink{
+		{info: makeLinkInfo(hubID("types"), "srv", "hub/srv", ltInstanceOf), isOut: false},
+	}, nil)
+	m.linking = &pendingLink{fromID: "hub/hw", kind: vkType}
+	return update(m, key("L"))
+}
+
+// TestTypeLink_AsksWhichRelation. Two types can be related in two entirely
+// different ways — a types-link is a SCHEMA declaration that permits
+// object-links between instances, a sub-type is INHERITANCE — and the form
+// used to silently assume the first. Nothing about walking from one type to
+// another says which was meant.
+func TestTypeLink_AsksWhichRelation(t *testing.T) {
+	m := twoTypes(t)
+	if m.form == nil {
+		t.Fatal("L should open the link form between two types")
+	}
+	fl, ok := m.form.field("relation")
+	if !ok {
+		t.Fatal("the form must ask which relation this is")
+	}
+	labels := ""
+	for _, o := range fl.options {
+		labels += o.label + " "
+	}
+	if !strings.Contains(labels, "types-link") || !strings.Contains(labels, "sub-type") {
+		t.Errorf("options = %q, want both relations offered", labels)
+	}
+}
+
+func TestTypeLink_SubTypeSubmitsInheritance(t *testing.T) {
+	var base, child string
+	withOps(t, graphOps{
+		subTypeSet: func(b, c string) opResult { base, child = b, c; return opResult{status: opApplied} },
+	})
+
+	m := twoTypes(t)
+	m = focusField(m, "relation")
+	m = update(m, tea.KeyMsg{Type: tea.KeyRight}) // types-link → sub-type
+	if got := m.form.value("relation"); got != relSubType {
+		t.Fatalf("relation = %q, want %q", got, relSubType)
+	}
+	_, cmd := updateCmd(m, tea_ctrlS())
+	runCmd(cmd)
+
+	if base != "hub/hw" || child != "hub/srv" {
+		t.Errorf("subTypeSet(%q,%q), want (hub/hw, hub/srv)", base, child)
+	}
+}
+
+func TestTypeLink_TypesLinkStillSubmitsTheSchema(t *testing.T) {
+	var gotOLT string
+	withOps(t, graphOps{
+		typesLinkCreate: func(_, _, olt string, _ []string, _ easyjson.JSON) opResult {
+			gotOLT = olt
+			return opResult{status: opApplied}
+		},
+	})
+
+	m := twoTypes(t)
+	_, cmd := updateCmd(m, tea_ctrlS())
+	runCmd(cmd)
+
+	if gotOLT != "srv" {
+		t.Errorf("objectLinkType = %q, want the prefilled target name", gotOLT)
+	}
+}
+
+// TestTypeLink_HidesWhatTheChosenRelationIgnores. A sub-type carries no
+// object-link type, no tags and no body — showing them would invite input the
+// operation has nowhere to put.
+func TestTypeLink_HidesWhatTheChosenRelationIgnores(t *testing.T) {
+	m := twoTypes(t)
+	f := *m.form
+	for _, key := range []string{"olt", "tags", "body"} {
+		fl, ok := f.field(key)
+		if !ok {
+			t.Fatalf("%s should exist for a types-link", key)
+		}
+		if !f.visible(fl) {
+			t.Errorf("%s should be shown while the relation is a types-link", key)
+		}
+	}
+
+	m = focusField(m, "relation")
+	m = update(m, tea.KeyMsg{Type: tea.KeyRight})
+	f = *m.form
+	for _, key := range []string{"olt", "tags", "body"} {
+		fl, _ := f.field(key)
+		if f.visible(fl) {
+			t.Errorf("%s applies to a types-link, not to a sub-type", key)
+		}
+	}
+	// And the form is submittable even though the hidden `olt` is required.
+	if !f.ok() {
+		t.Error("a required field the current choice hides must not block submission")
 	}
 }

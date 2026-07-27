@@ -11,114 +11,35 @@ import (
 // status bar is exactly one line — a second line there would silently corrupt
 // every panel's computed height.
 
-// editorSize returns the textarea dimensions for a full-screen form:
-// the whole window minus title, footer strip, hint line and borders.
+// editorSize returns the textarea dimensions inside the centre column: the
+// panel minus the form's own chrome — title, the mode and validity lines, the
+// hint line — and whatever rows the form's other fields take.
 func (m tuiModel) editorSize() (int, int) { return m.editorSizeFor(0) }
 
-// editorSizeFor leaves room for extraRows of chrome above the textarea — the
-// context block and the tags row of a link edit.
 func (m tuiModel) editorSizeFor(extraRows int) (int, int) {
-	w := m.width - 4
-	if w < 20 {
-		w = 20
+	w := m.centerContentW() - 2
+	if m.isNarrow() {
+		w = m.width - 2
 	}
-	h := m.height - 6 - extraRows
+	if w < 16 {
+		w = 16
+	}
+	h := m.panelContentH() - 7 - extraRows
 	if h < 3 {
 		h = 3
 	}
 	return w, h
 }
 
-// renderFormFull draws a full-screen form — currently the JSON body editor.
-func (m tuiModel) renderFormFull() string {
-	f := m.form
-	if f == nil {
-		return ""
-	}
-	ed := f.jsonField()
-	if ed == nil {
-		return styleErr.Render("form has no editor")
-	}
-
-	title := styleTitle.Render("◈ " + truncateCells(f.title, m.width-2))
-
-	// Mode line. The consequence is spelled out rather than the flag name:
-	// "MERGE" tells the user nothing, "cannot remove a key" tells them why
-	// their deletion did not take effect.
-	var mode string
-	if ed.replace {
-		mode = styleWarn.Render("REPLACE") +
-			styleDim.Render("  the whole body is replaced; preserved paths are re-attached")
-	} else {
-		mode = styleOk.Render("MERGE") +
-			styleDim.Render("  deep merge; arrays are appended — cannot remove a key or an element")
-	}
-
-	// Validation line.
-	var status string
-	if ed.valid() {
-		status = styleOk.Render("✓ valid JSON object")
-	} else {
-		status = styleErr.Render("✗ " + ed.parseErr)
-	}
-
-	// Preserved-paths strip, so nothing looks lost.
-	preserved := ""
-	if names := ed.reservedNames(); len(names) > 0 {
-		preserved = styleDim.Render("preserved (not editable): " + strings.Join(names, " · "))
-	}
-
-	hints := renderHintLine(formHints(f))
-
-	rows := []string{title}
-	// Context the edge is addressed BY, and cannot be changed here: the API
-	// locates a link by its owner and name, and moving an endpoint is a delete
-	// plus a create. Shown rather than omitted, so the form says which of
-	// several same-named edges it is about to write.
-	for _, r := range f.contextRows {
-		rows = append(rows, styleDim.Render(truncateCells(r, m.width-2)))
-	}
-	// Editable fields other than the body — currently just tags.
-	for i, fl := range f.fields {
-		if fl.kind == fieldJSON {
-			continue
-		}
-		label := styleDim.Render("  " + fl.label + "  ")
-		if i == f.cur {
-			label = styleHintKey.Render("▸ " + fl.label + "  ")
-		}
-		var val string
-		if fl.kind == fieldTags {
-			val = renderTagChips(fl.value)
-			if len(fl.value) == 0 {
-				val = styleDim.Render("(none)")
-			}
-		} else {
-			val = styleMetaVal.Render(fl.value)
-		}
-		if i == f.cur {
-			val += styleHintSep.Render("▏")
-		}
-		rows = append(rows, truncateCells(label+val, m.width-2))
-		if fl.err != "" {
-			rows = append(rows, truncateCells(styleErr.Render("    ✗ "+fl.err), m.width-2))
-		}
-	}
-	rows = append(rows, mode, ed.ta.View(), status)
-	if preserved != "" {
-		rows = append(rows, preserved)
-	}
-	if f.err != "" {
-		rows = append(rows, styleErr.Render("✗ "+f.err))
-	}
-	rows = append(rows, styleStatus.Width(m.width).Render(hints))
-
-	return lipgloss.JoinVertical(lipgloss.Left, rows...)
-}
-
-// renderFormCenter draws a multi-field form in place of the centre panel's
-// body. The side panels stay visible on purpose: filling in a link form, the
-// user can still see the graph they navigated through to get here.
+// renderFormCenter draws a form in the centre column — every form, including
+// the body editor.
+//
+// There used to be a second, full-screen renderer for anything with a JSON
+// editor, so creating a link and editing one happened in visibly different
+// places for no reason the user could infer. The centre column is where the
+// subject lives, and a form is the subject in edit mode, so that is where it
+// belongs. The side panels stay visible on purpose: filling in a link form,
+// the graph you navigated through to get here is still on screen.
 func (m tuiModel) renderFormCenter(w, h int) string {
 	f := m.form
 	if f == nil {
@@ -126,6 +47,14 @@ func (m tuiModel) renderFormCenter(w, h int) string {
 	}
 
 	lines := []string{styleTitle.Render(truncateCells(f.title, w)), ""}
+	// Facts the form is ABOUT, as opposed to what it will write: how the edge
+	// is addressed, which cannot be changed here.
+	for _, r := range f.contextRows {
+		lines = append(lines, truncateCells(styleDim.Render("  "+r), w))
+	}
+	if len(f.contextRows) > 0 {
+		lines = append(lines, "")
+	}
 
 	labelW := 0
 	for _, fl := range f.fields {
@@ -135,12 +64,20 @@ func (m tuiModel) renderFormCenter(w, h int) string {
 	}
 
 	for i, fl := range f.fields {
+		if !f.visible(fl) {
+			continue
+		}
 		focused := i == f.cur
 		label := fl.label + strings.Repeat(" ", labelW-lipgloss.Width(fl.label))
 		if focused {
 			label = styleHintKey.Render("▸ " + label)
 		} else {
 			label = styleDim.Render("  " + label)
+		}
+
+		if fl.kind == fieldJSON && fl.json != nil {
+			lines = append(lines, m.renderJSONField(fl, focused, w)...)
+			continue
 		}
 
 		var val string
@@ -175,25 +112,21 @@ func (m tuiModel) renderFormCenter(w, h int) string {
 		row := label + "  " + val
 		lines = append(lines, truncateCells(row, w))
 
+		// An enum's hint belongs to the OPTION, not the field: the whole reason
+		// to offer a choice is that the options mean different things.
+		hint := fl.hint
+		if fl.kind == fieldEnum && fl.optIdx < len(fl.options) && fl.options[fl.optIdx].hint != "" {
+			hint = fl.options[fl.optIdx].hint
+		}
 		if fl.err != "" {
 			lines = append(lines, truncateCells(styleErr.Render(strings.Repeat(" ", labelW+4)+"✗ "+fl.err), w))
-		} else if fl.hint != "" {
-			lines = append(lines, truncateCells(styleDim.Render(strings.Repeat(" ", labelW+4)+fl.hint), w))
+		} else if hint != "" {
+			lines = append(lines, truncateCells(styleDim.Render(strings.Repeat(" ", labelW+4)+hint), w))
 		}
 	}
 
 	if f.err != "" {
 		lines = append(lines, "", truncateCells(styleErr.Render("✗ "+f.err), w))
-	}
-
-	// The form's own keys, in the panel. The status bar carries them too, but
-	// the panel is where the user is looking, and Tab moving between fields is
-	// not guessable from a list of labels.
-	if hints := formHints(f); hints != "" {
-		for len(lines) < h-1 {
-			lines = append(lines, "")
-		}
-		lines = append(lines, truncateCells(renderHintLine(hints), w))
 	}
 
 	for len(lines) < h {
@@ -396,4 +329,38 @@ func joinColumns(blocks []string, n, colW int) string {
 		}
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, rendered...)
+}
+
+// renderJSONField draws the body editor inline in the form, with the mode line
+// and the validity line that used to live in the full-screen chrome.
+func (m tuiModel) renderJSONField(fl formField, focused bool, w int) []string {
+	ed := fl.json
+
+	// The consequence is spelled out rather than the flag name: "MERGE" tells
+	// the user nothing, "cannot remove a key" tells them why their deletion
+	// did not take effect.
+	var mode string
+	if ed.replace {
+		mode = styleWarn.Render("REPLACE") + styleDim.Render("  replaces the whole body")
+	} else {
+		mode = styleOk.Render("MERGE") + styleDim.Render("  cannot remove a key")
+	}
+
+	head := styleDim.Render("  body  ")
+	if focused {
+		head = styleHintKey.Render("▸ body  ")
+	}
+	out := []string{truncateCells(head+mode, w)}
+	out = append(out, strings.Split(ed.ta.View(), "\n")...)
+
+	if ed.valid() {
+		out = append(out, truncateCells(styleOk.Render("  ✓ valid JSON object"), w))
+	} else {
+		out = append(out, truncateCells(styleErr.Render("  ✗ "+ed.parseErr), w))
+	}
+	if names := ed.reservedNames(); len(names) > 0 {
+		out = append(out, truncateCells(
+			styleDim.Render("  preserved (not editable): "+strings.Join(names, " · ")), w))
+	}
+	return out
 }

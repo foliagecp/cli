@@ -349,7 +349,9 @@ func (t linkTier) noun() string {
 func (t linkTier) title() string {
 	switch t {
 	case tierTypesLink:
-		return "New types-link"
+		// Neutral, because the form asks which of the two relations this is
+		// and the answer can change while it is open.
+		return "Relate two types"
 	case tierObjectsLink:
 		return "New objects-link"
 	default:

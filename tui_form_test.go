@@ -293,8 +293,8 @@ func TestKeyI_OpensBodyEditor(t *testing.T) {
 	if m.form == nil {
 		t.Fatal("i should open a form")
 	}
-	if m.form.chrome != chromeFull {
-		t.Errorf("chrome = %v, want chromeFull", m.form.chrome)
+	if m.form.chrome != chromeCenter {
+		t.Errorf("chrome = %v, want chromeCenter", m.form.chrome)
 	}
 	if m.form.editor() == nil {
 		t.Fatal("the form should carry a JSON editor")

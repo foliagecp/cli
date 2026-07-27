@@ -141,7 +141,7 @@ func TestNarrow_BodyEditorStillOwnsTheScreen(t *testing.T) {
 	m.llMode = true // hub/x is a plain vertex
 	m = update(m, key("i"))
 
-	if m.form == nil || m.form.chrome != chromeFull {
+	if m.form == nil || m.form.chrome != chromeCenter {
 		t.Fatal("i should open the full-screen editor")
 	}
 	if !strings.Contains(stripANSI(m.View()), "\"k\"") {
