@@ -326,7 +326,11 @@ func (m tuiModel) renderCenterPanel() string {
 	typeMap := m.renderTypeMap(cw, m.typeMapH())
 
 	inner := lipgloss.JoinVertical(lipgloss.Left, title, body, divider, typeMap)
-	return stylePanel.Width(cw).Height(ch).Render(inner)
+	ps := stylePanel.Width(cw).Height(ch)
+	if m.focus == panelCenter {
+		ps = stylePanelActive.Width(cw).Height(ch)
+	}
+	return ps.Render(inner)
 }
 
 // renderTypeMap renders a 4-column type-flow map showing two hops in each direction:
@@ -517,6 +521,8 @@ func (m tuiModel) viewNarrow() string {
 	}
 	divider := styleDim.Render(strings.Repeat("─", w))
 
+	// Stacked in one column, the subject goes on top and the lists below it —
+	// the same information the three columns carry, in reading order.
 	var main string
 	subj := m.subject()
 	switch {
@@ -527,12 +533,18 @@ func (m tuiModel) viewNarrow() string {
 		main = m.renderQueryResults(w, listH)
 	case m.loading:
 		main = styleLoading.Render("loading…")
-	case subj.kind == subjLink:
-		// The selected link, then as much of the list as still fits.
-		detail := m.renderLinkSubject(subj.link, w, listH/2)
-		main = detail + "\n" + divider + "\n" + m.narrowLinkLists(w, listH-listH/2-1)
 	default:
-		main = m.narrowLinkLists(w, listH)
+		top := listH / 2
+		if top < 3 {
+			top = 3
+		}
+		var detail string
+		if subj.kind == subjLink {
+			detail = m.renderLinkSubject(subj.link, w, top)
+		} else {
+			detail = clipLines(m.bodyContent(), top)
+		}
+		main = detail + "\n" + divider + "\n" + m.narrowLinkLists(w, listH-top-1)
 	}
 
 	rows := []string{m.renderHeader(), m.narrowSubtitle(w), divider, main}
@@ -556,6 +568,17 @@ func (m tuiModel) narrowSubtitle(w int) string {
 	}
 	if m.mode() != modeBrowse {
 		line += " " + styleMetaKey.Render("· "+m.mode().String())
+	} else {
+		// The wide layout says this with a border. Stacked in one column there
+		// are no borders, so which of the three has focus has to be written.
+		switch m.focus {
+		case panelIn:
+			line += " " + styleIn.Render("· incoming")
+		case panelOut:
+			line += " " + styleOut.Render("· outgoing")
+		default:
+			line += " " + styleDim.Render("· the vertex")
+		}
 	}
 	return truncateCells(line, w)
 }
@@ -959,7 +982,7 @@ func (m tuiModel) browseHintLine(lead, sep string, reserved int) string {
 		parts = append(parts, chip)
 	}
 
-	for _, h := range browseHintsFor(m.activeCursorVal() >= 0) {
+	for _, h := range browseHintsFor(m.linkPanelFocused()) {
 		if h == "L:link" && m.linking != nil {
 			h = "L:commit link"
 		}
@@ -973,4 +996,20 @@ func (m tuiModel) browseHintLine(lead, sep string, reserved int) string {
 	}
 	parts = append(parts, help)
 	return strings.Join(parts, sep)
+}
+
+// clipLines keeps at most n lines and pads to exactly n, so a block occupies
+// the height it was given whether or not it fills it.
+func clipLines(s string, n int) string {
+	if n < 1 {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	for len(lines) < n {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
 }

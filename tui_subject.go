@@ -34,7 +34,14 @@ type subject struct {
 	link displayLink // subjLink only
 }
 
+// subject is decided by which column has focus. On the centre column it is
+// the vertex; in a link panel it is the selected link — and when that panel is
+// empty or the cursor is on a group header, there is no link to be the
+// subject, so it falls back to the vertex.
 func (m tuiModel) subject() subject {
+	if !m.linkPanelFocused() {
+		return subject{kind: subjVertex}
+	}
 	if dl, ok := m.cursorLink(); ok {
 		return subject{kind: subjLink, link: dl}
 	}

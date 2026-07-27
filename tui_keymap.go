@@ -46,7 +46,7 @@ type binding struct {
 var keymap = []binding{
 	// ── Browse ────────────────────────────────────────────────────────────
 	{keys: "j k  ↑ ↓", desc: "move the cursor", mode: modeBrowse, group: "Navigate", hint: "jk:nav", prio: 1},
-	{keys: "h l  ← →", desc: "switch between the incoming and outgoing panel", mode: modeBrowse, group: "Navigate"},
+	{keys: "h l  ← →", desc: "move between the columns: incoming · the vertex · outgoing", mode: modeBrowse, group: "Navigate", hint: "hl:column", prio: 2},
 	{keys: "Enter", desc: "follow the selected link · expand or collapse a type group", mode: modeBrowse, group: "Navigate", hint: "Enter:go", prio: 1},
 	{keys: "Tab", desc: "collapse or expand the type group", mode: modeBrowse, group: "Navigate", hint: "Tab:collapse", prio: 4},
 	{keys: "b  Backspace", desc: "back to the previous vertex", mode: modeBrowse, group: "Navigate", hint: "b:back", prio: 2},
@@ -133,10 +133,10 @@ func browseKeys() []string {
 
 // browseHintsFor is the short form for the status bar, in table order.
 //
-// Tab is announced only while a row is selected, because that is the only time
-// it does anything — and a hint for a key that is currently inert is the same
-// lie as a hint for a key that does not exist. Everything else applies to the
-// subject, whatever the subject happens to be, so it is always shown.
+// Tab is announced only while a link panel has focus, because that is the only
+// time it does anything — and a hint for a key that is currently inert is the
+// same lie as a hint for a key that does not exist. Everything else applies to
+// the subject, whatever the subject happens to be, so it is always shown.
 func browseHintsFor(rowSelected bool) []string {
 	picked := make([]binding, 0, 12)
 	for _, b := range keymap {

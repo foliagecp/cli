@@ -16,6 +16,7 @@ import (
 func linkWithDetail(t *testing.T, dl displayLink, tags []string, body easyjson.JSON) tuiModel {
 	t.Helper()
 	m := makeModel("hub/a", []displayLink{dl}, nil)
+	m.focus = panelOut
 	m.rCursor = 1 // 0 is the group header
 	m = m.applyLinkDetail(linkDetailMsg{
 		key:    keyOf(dl),
@@ -39,9 +40,13 @@ func numBody(k string, v int) easyjson.JSON {
 func TestSubject_IsTheLinkUnderTheCursorAndTheVertexOtherwise(t *testing.T) {
 	m := makeModel("hub/a", threeLinks(), nil)
 
-	m.rCursor = 0 // group header
 	if got := m.subject().kind; got != subjVertex {
-		t.Error("off a link row the subject is the vertex")
+		t.Error("on the centre column the subject is the vertex")
+	}
+	m.focus = panelOut
+	m.rCursor = 0 // group header — nothing link-shaped is selected
+	if got := m.subject().kind; got != subjVertex {
+		t.Error("a group header is not an entity; the subject falls back to the vertex")
 	}
 	m.rCursor = 1
 	if got := m.subject().kind; got != subjLink {
@@ -65,6 +70,7 @@ func TestSubject_CentrePanelShowsTheSelectedLink(t *testing.T) {
 
 func TestSubject_SaysItIsStillReadingRatherThanShowingBlanks(t *testing.T) {
 	m := makeModel("hub/a", []displayLink{rawLink()}, nil)
+	m.focus = panelOut
 	m.rCursor = 1
 
 	out := stripANSI(m.renderCenterPanel())
@@ -263,7 +269,9 @@ func onType(id string, extra ...displayLink) tuiModel {
 	links := append([]displayLink{
 		{info: makeLinkInfo(hubID("types"), stripDomain(id), id, ltInstanceOf), isOut: false},
 	}, extra...)
-	return makeModel(id, links, nil)
+	m := makeModel(id, links, nil)
+	m.focus = panelOut
+	return m
 }
 
 // TestDeleteLink_TypesLinkCascades is the fix for a real corruption: the TUI
@@ -346,6 +354,7 @@ func TestDeleteLink_OrdinaryEdgeStaysASingleKeyConfirmation(t *testing.T) {
 	})
 
 	m := makeModel("hub/a", []displayLink{rawLink()}, nil)
+	m.focus = panelOut
 	m.rCursor = 1
 
 	m = update(m, key("d"))

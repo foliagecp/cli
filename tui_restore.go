@@ -144,8 +144,7 @@ func selectedLinkIn(groups []linkGroup, flat []flatItem, cursor int) (displayLin
 // group named `tp`. Falls back to that group's header, then to 0.
 func locateCursor(groups []linkGroup, flat []flatItem, tp string, match func(displayLink) bool) int {
 	if tp == "" {
-		// Nothing was selected before the reload; nothing is selected after.
-		return noSelection
+		return 0
 	}
 	headerIdx := -1
 	for i, item := range flat {
@@ -163,5 +162,5 @@ func locateCursor(groups []linkGroup, flat []flatItem, tp string, match func(dis
 	if headerIdx >= 0 {
 		return headerIdx
 	}
-	return noSelection
+	return 0
 }

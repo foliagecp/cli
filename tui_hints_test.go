@@ -8,103 +8,129 @@ import (
 	"github.com/foliagecp/easyjson"
 )
 
-// ── Nothing selected by default ───────────────────────────────────────────────
+// ── The centre column is where the vertex lives ───────────────────────────────
 
-// TestSelection_NothingIsHighlightedOnArrival. The panels used to open with
-// row 0 highlighted, which reads as "this group is selected and is what the
-// next key acts on" — while the thing actually under the cursor was the
-// vertex. The highlight was a claim about the subject, and a false one.
-func TestSelection_NothingIsHighlightedOnArrival(t *testing.T) {
+// TestFocus_ArrivesOnTheCentreColumn. A highlighted row is a claim about what
+// the next key acts on. The panels used to open with row 0 highlighted while
+// the thing actually under the cursor was the vertex — so the claim was false
+// until the user walked into a list. Focus answers it instead: an unfocused
+// panel draws no highlight at all, so standing on the centre column asserts
+// nothing about either list.
+func TestFocus_ArrivesOnTheCentreColumn(t *testing.T) {
 	fvi := makeVertexInfo("hub/x", nil, nil)
 	m := makeModel("hub/x", threeLinks(), &fvi)
 
-	if m.rCursor != noSelection || m.lCursor != noSelection {
-		t.Fatalf("cursors = (%d,%d), want nothing selected", m.rCursor, m.lCursor)
-	}
-	if _, onLink := m.cursorLink(); onLink {
-		t.Error("no link should be selected before the user walks the list")
+	if m.focus != panelCenter {
+		t.Fatalf("focus = %v on arrival, want the centre column", m.focus)
 	}
 	if m.subject().kind != subjVertex {
-		t.Error("with nothing selected the subject is the vertex")
+		t.Error("on the centre column the subject is the vertex")
+	}
+	if _, onLink := m.cursorLink(); onLink {
+		t.Error("no link is selected while the centre column has focus")
 	}
 }
 
-func TestSelection_ArrivesAndLeavesWithTheSameKey(t *testing.T) {
+func TestFocus_NeitherSidePanelIsHighlightedFromTheCentre(t *testing.T) {
 	fvi := makeVertexInfo("hub/x", nil, nil)
-	m := makeModel("hub/x", threeLinks(), &fvi)
+	m := makeModel("hub/x", mixedLinks(), &fvi)
 
-	m = update(m, key("j"))
-	if m.rCursor != 0 {
-		t.Fatalf("j should enter the list, got %d", m.rCursor)
-	}
-	// Past the last row it cycles back out, so the same key that walks in
-	// walks back out — there is nothing extra to learn about deselecting.
-	for i := 0; i < len(m.grouped.outFlat); i++ {
-		m = update(m, key("j"))
-	}
-	if m.rCursor != noSelection {
-		t.Errorf("cursor = %d after walking off the end, want nothing selected", m.rCursor)
-	}
-}
-
-func TestSelection_ALoadClearsIt(t *testing.T) {
-	m := makeModel("hub/x", threeLinks(), nil)
-	m = update(m, key("j"))
-	m = update(m, key("j"))
-	if m.rCursor < 0 {
-		t.Fatal("fixture: something should be selected")
-	}
-
-	m = update(m, linksLoadedMsg{id: "hub/x", gen: m.loadGen, links: threeLinks()})
-	if m.rCursor != noSelection {
-		t.Errorf("a fresh load should select nothing, got %d", m.rCursor)
-	}
-}
-
-func TestSelection_NoRowIsRenderedHighlighted(t *testing.T) {
-	fvi := makeVertexInfo("hub/x", nil, nil)
-	m := makeModel("hub/x", threeLinks(), &fvi)
-
-	panel := m.renderSidePanel(true)
-	if strings.Contains(panel, styleSelected.Render("")) && strings.Contains(panel, "\x1b[48;5;57m") {
-		t.Error("no row should be highlighted while nothing is selected")
-	}
-}
-
-// TestSelection_ASelectedLinkHasNoChevron. The ► marking a selected link is a
-// near-twin of the ▸ a COLLAPSED GROUP shows, so a selected link looked like
-// something Tab would expand.
-func TestSelection_ASelectedLinkHasNoChevron(t *testing.T) {
-	fvi := makeVertexInfo("hub/x", nil, nil)
-	m := makeModel("hub/x", threeLinks(), &fvi)
-	m = update(m, key("j")) // group header
-	m = update(m, key("j")) // first link
-
-	row := ""
-	for _, l := range strings.Split(stripANSI(m.renderSidePanel(true)), "\n") {
-		if strings.Contains(l, "l1") {
-			row = l
+	for _, isOut := range []bool{true, false} {
+		if strings.Contains(m.renderSidePanel(isOut), highlightBG) {
+			t.Errorf("isOut=%v: an unfocused panel must not highlight a row", isOut)
 		}
 	}
-	if row == "" {
-		t.Fatal("the first link row should be on screen")
+}
+
+func TestFocus_MovesAcrossThreeColumnsAndClamps(t *testing.T) {
+	fvi := makeVertexInfo("hub/x", nil, nil)
+	m := makeModel("hub/x", mixedLinks(), &fvi)
+
+	m = update(m, key("l"))
+	if m.focus != panelOut {
+		t.Fatalf("l from the centre = %v, want the outgoing column", m.focus)
 	}
-	if strings.ContainsAny(row, "►▸▾") {
-		t.Errorf("a selected link must not carry a collapse-shaped marker: %q", row)
+	m = update(m, key("l"))
+	if m.focus != panelOut {
+		t.Error("the columns are a position on screen, not a ring — l must clamp")
+	}
+	m = update(m, key("h"))
+	m = update(m, key("h"))
+	if m.focus != panelIn {
+		t.Fatalf("two h presses = %v, want the incoming column", m.focus)
+	}
+	m = update(m, key("h"))
+	if m.focus != panelIn {
+		t.Error("h must clamp at the left column")
+	}
+}
+
+func TestFocus_SteppingIntoALinkPanelSelectsItsFirstRow(t *testing.T) {
+	// This is what the focus model buys: the highlight can be there from the
+	// first keystroke, because by then it is true.
+	fvi := makeVertexInfo("hub/x", nil, nil)
+	m := makeModel("hub/x", threeLinks(), &fvi)
+	m = update(m, key("l"))
+
+	if m.rCursor != 0 {
+		t.Errorf("rCursor = %d, want the first row", m.rCursor)
+	}
+	if !strings.Contains(m.renderSidePanel(true), highlightBG) {
+		t.Error("the focused panel should highlight its cursor row")
+	}
+}
+
+func TestFocus_TheCentreColumnShowsItHasFocus(t *testing.T) {
+	// stylePanelActive used to apply to the side panels only, so the centre
+	// column had no focused state — it was not in the cycle.
+	fvi := makeVertexInfo("hub/x", nil, nil)
+	m := makeModel("hub/x", threeLinks(), &fvi)
+
+	focused := m.renderCenterPanel()
+	m.focus = panelOut
+	unfocused := m.renderCenterPanel()
+	if focused == unfocused {
+		t.Error("the centre column must look different when it has focus")
+	}
+}
+
+func TestFocus_AnEmptyLinkPanelFallsBackToTheVertex(t *testing.T) {
+	fvi := makeVertexInfo("hub/x", nil, nil)
+	m := makeModel("hub/x", threeLinks(), &fvi) // out-links only
+	m = update(m, key("h"))                     // the empty incoming column
+
+	if m.subject().kind != subjVertex {
+		t.Error("with no link to be the subject it falls back to the vertex")
+	}
+}
+
+func TestFocus_SurvivesNavigation(t *testing.T) {
+	// Walking a chain of links should not need an l press per hop.
+	m := makeModel("hub/x", threeLinks(), nil)
+	m = update(m, key("l"))
+	m = update(m, linksLoadedMsg{id: "hub/y", gen: m.loadGen, links: threeLinks()})
+
+	if m.focus != panelOut {
+		t.Errorf("focus = %v after a load, want it kept", m.focus)
 	}
 }
 
 // ── Tab is labelled wherever it does something ────────────────────────────────
 
-func TestHints_TabIsAnnouncedOnlyWhileARowIsSelected(t *testing.T) {
+// highlightBG is the selected-row background as lipgloss emits it. It combines
+// foreground and background into one sequence, so the background code is a
+// substring rather than a sequence of its own.
+const highlightBG = "48;5;57"
+
+func TestHints_TabIsAnnouncedOnlyInALinkPanel(t *testing.T) {
 	fvi := makeVertexInfo("hub/x", nil, nil)
 	m := makeModel("hub/x", threeLinks(), &fvi)
 	m.width = 140
 
 	if strings.Contains(stripANSI(m.renderStatus()), "Tab") {
-		t.Error("Tab does nothing with no row selected — advertising it is the same lie as a key that does not exist")
+		t.Error("Tab does nothing on the centre column — advertising it is the same lie as a key that does not exist")
 	}
-	m = update(m, key("j"))
+	m = update(m, key("l"))
 	if !strings.Contains(stripANSI(m.renderStatus()), "Tab:collapse") {
 		t.Error("Tab collapses the group under the cursor and must say so")
 	}
@@ -344,5 +370,36 @@ func TestGoto_EscLeavesEverythingAlone(t *testing.T) {
 	}
 	if m.currentID != "hub/x" || len(m.history) != 0 {
 		t.Error("Esc must not move you")
+	}
+}
+
+func TestFocus_NarrowLayoutSaysWhichColumnHasFocus(t *testing.T) {
+	// Stacked in one column there are no borders, so the thing the wide layout
+	// says with a highlighted frame has to be written out.
+	fvi := makeVertexInfo("hub/x", nil, nil)
+	m := makeModel("hub/x", threeLinks(), &fvi)
+	m.width, m.height = 60, 24
+
+	if !strings.Contains(stripANSI(m.View()), "the vertex") {
+		t.Error("the narrow layout must say the centre column has focus")
+	}
+	m = update(m, key("l"))
+	if !strings.Contains(stripANSI(m.View()), "outgoing") {
+		t.Error("the narrow layout must say which link panel has focus")
+	}
+}
+
+func TestFocus_NarrowLayoutShowsTheSubjectAboveTheLists(t *testing.T) {
+	fvi := makeVertexInfo("hub/x", nil, nil)
+	m := makeModel("hub/x", threeLinks(), &fvi)
+	m.width, m.height = 60, 24
+	m = m.refreshBody()
+
+	out := stripANSI(m.View())
+	if !strings.Contains(out, "name") {
+		t.Errorf("the vertex body should be reachable at 60 columns:\n%s", out)
+	}
+	if !strings.Contains(out, "l1") {
+		t.Errorf("the link list should still be there:\n%s", out)
 	}
 }

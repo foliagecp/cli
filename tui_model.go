@@ -211,40 +211,60 @@ func linkForItemIn(groups []linkGroup, item flatItem) (displayLink, bool) {
 	return g.links[item.linkIdx], true
 }
 
-// noSelection is the cursor value meaning "no row is picked out".
+// nextSelectable advances the cursor by dir (+1/-1), wrapping around the list.
 //
-// This is the resting state, not an edge case. The panels used to open with
-// row 0 highlighted, which reads as "this group is selected and is what the
-// next key acts on" — while the thing actually under the cursor was the
-// vertex. The highlight was a claim about the subject, and it was false until
-// the user started walking the list.
-const noSelection = -1
-
-// nextSelectable advances the cursor by dir (+1/-1) through the list, cycling
-// back out to noSelection past either end.
-//
-// Wrapping THROUGH the unselected state is deliberate: it means the same key
-// that walks into the link list also walks back out of it to the vertex, so
-// there is nothing extra to learn about how to stop selecting something.
+// There is no "nothing selected" position: leaving the links is a move to the
+// centre column, not a cursor value. A highlight in an unfocused panel is
+// never drawn, so the cursor sitting on row 0 there claims nothing.
 func nextSelectable(flat []flatItem, from, dir int) int {
 	n := len(flat)
 	if n == 0 {
-		return noSelection
+		return 0
 	}
-	// Positions are -1 (nothing) then 0..n-1, cycled as a ring of n+1.
-	pos := from + 1 + dir
-	pos = (pos + n + 1) % (n + 1)
-	return pos - 1
+	if from < 0 {
+		from = 0
+	}
+	return (from + dir + n) % n
 }
 
 // ── Panel focus ────────────────────────────────────────────────────────────────
 
+// panelFocus says which of the three columns the user is in, and therefore
+// what they are working with.
+//
+// The centre column is part of the cycle, and that is what makes the highlight
+// honest. Focus on the centre means the subject is the vertex, and neither
+// side panel draws a highlight — a non-focused panel never has — so arriving
+// at a vertex no longer asserts that some link is selected. Step into a side
+// panel and its first row highlights, because there the claim is true.
+//
+// The order is the physical one: incoming, centre, outgoing. h and l move
+// between them and clamp at the ends rather than wrapping, because the mental
+// model is a position on screen, not a ring.
 type panelFocus int
 
 const (
-	panelOut panelFocus = iota // right panel — outgoing links (default)
-	panelIn                    // left panel — incoming links
+	panelIn     panelFocus = iota // left column — incoming links
+	panelCenter                   // middle column — the vertex itself (default)
+	panelOut                      // right column — outgoing links
 )
+
+// left and right move the focus one column, clamped.
+func (f panelFocus) left() panelFocus {
+	if f > panelIn {
+		return f - 1
+	}
+	return f
+}
+
+func (f panelFocus) right() panelFocus {
+	if f < panelOut {
+		return f + 1
+	}
+	return f
+}
+
+func (f panelFocus) onLinks() bool { return f == panelIn || f == panelOut }
 
 // ── Model ─────────────────────────────────────────────────────────────────────
 
@@ -350,11 +370,17 @@ type tuiModel struct {
 
 // ── Active-panel helpers ───────────────────────────────────────────────────────
 
+// The active* helpers describe the focused LINK panel. On the centre column
+// there is none, and they answer with nothing — which is what makes
+// cursorLink false there, and the subject the vertex.
 func (m tuiModel) activeFlat() []flatItem {
-	if m.focus == panelIn {
+	switch m.focus {
+	case panelIn:
 		return m.grouped.inFlat
+	case panelOut:
+		return m.grouped.outFlat
 	}
-	return m.grouped.outFlat
+	return nil
 }
 
 func (m tuiModel) activeCursorVal() int {
@@ -364,6 +390,9 @@ func (m tuiModel) activeCursorVal() int {
 	return m.rCursor
 }
 
+// linkPanelFocused reports whether a link panel owns the subject.
+func (m tuiModel) linkPanelFocused() bool { return m.focus.onLinks() }
+
 func (m tuiModel) activeOffsetVal() int {
 	if m.focus == panelIn {
 		return m.lOffset
@@ -372,25 +401,30 @@ func (m tuiModel) activeOffsetVal() int {
 }
 
 func (m tuiModel) activeGroups() []linkGroup {
-	if m.focus == panelIn {
+	switch m.focus {
+	case panelIn:
 		return m.grouped.inGroups
+	case panelOut:
+		return m.grouped.outGroups
 	}
-	return m.grouped.outGroups
+	return nil
 }
 
 func (m tuiModel) setActiveCursor(v int) tuiModel {
-	if m.focus == panelIn {
+	switch m.focus {
+	case panelIn:
 		m.lCursor = v
-	} else {
+	case panelOut:
 		m.rCursor = v
 	}
 	return m
 }
 
 func (m tuiModel) setActiveOffset(v int) tuiModel {
-	if m.focus == panelIn {
+	switch m.focus {
+	case panelIn:
 		m.lOffset = v
-	} else {
+	case panelOut:
 		m.rOffset = v
 	}
 	return m
@@ -468,7 +502,7 @@ func newTuiModel(startID string) tuiModel {
 		gotoInput:   gi,
 		cache:       make(map[string]cachedVertex),
 		linkDetails: make(map[linkKey]linkDetail),
-		focus:       panelOut,
+		focus:       panelCenter,
 	}
 }
 

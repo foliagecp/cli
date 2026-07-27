@@ -70,8 +70,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = applyRestore(m, m.restore)
 			m.restore = nil
 		} else {
-			m.rCursor = noSelection
-			m.lCursor = noSelection
+			m.rCursor = 0
+			m.lCursor = 0
 			m.rOffset = 0
 			m.lOffset = 0
 		}
@@ -107,8 +107,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.inTypes2 = nil
 		m.grouped = groupedView{}
 		m.linksTotal = len(msg.fvi.outLinks) + len(msg.fvi.inLinks)
-		m.rCursor = noSelection
-		m.lCursor = noSelection
+		m.rCursor = 0
+		m.lCursor = 0
 		m.rOffset = 0
 		m.lOffset = 0
 		m = m.refreshBody()
@@ -143,8 +143,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = applyRestore(m, m.restore)
 			m.restore = nil
 		} else {
-			m.rCursor = noSelection
-			m.lCursor = noSelection
+			m.rCursor = 0
+			m.lCursor = 0
 			m.rOffset = 0
 			m.lOffset = 0
 		}
@@ -329,11 +329,11 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "h", "left":
-			m.focus = panelIn
+			m.focus = m.focus.left()
 			return m.peekCursorLink()
 
 		case "l", "right":
-			m.focus = panelOut
+			m.focus = m.focus.right()
 			return m.peekCursorLink()
 
 		case "b", "backspace":
@@ -521,8 +521,8 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchQuery = ""
 				m.searchInput.SetValue("")
 				m.grouped = buildGroupedView(m.links, "")
-				m.rCursor = noSelection
-				m.lCursor = noSelection
+				m.rCursor = 0
+				m.lCursor = 0
 				m.rOffset = 0
 				m.lOffset = 0
 				m = m.refreshBody()
@@ -667,8 +667,8 @@ func (m tuiModel) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m tuiModel) applySearch(q string) tuiModel {
 	m.searchQuery = q
 	m.grouped = buildGroupedView(m.links, q)
-	m.rCursor = noSelection
-	m.lCursor = noSelection
+	m.rCursor = 0
+	m.lCursor = 0
 	m.rOffset = 0
 	m.lOffset = 0
 	return m.refreshBody()

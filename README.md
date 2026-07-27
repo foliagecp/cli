@@ -23,7 +23,9 @@ Opens a full-screen three-panel TUI. Navigation starts from the last persisted
 position (or `root` on first run). Below 90 columns it falls back to a single
 column, which renders the same things — including every modal.
 
-Here the cursor is on a link, so the centre panel is showing that link:
+Here the outgoing column has focus with a link selected, so the centre panel is
+showing that link. Standing on the centre column instead shows the vertex, and
+neither side panel is highlighted:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -51,10 +53,11 @@ handlers, so neither can disagree with the code.
 
 ### You are always standing on a subject
 
-The subject is either a vertex or a link: put the cursor on a link row and that
-link becomes the subject, move off it and the vertex does. **The centre panel
-always shows the subject in full** — for a link that means its endpoints, name,
-type, API tier, tags and body, none of which used to be visible anywhere.
+The subject is either a vertex or a link, and which one is decided by the
+column you are standing in: the centre column is the vertex, a side column is
+the link under its cursor. **The centre panel always shows the subject in
+full** — for a link that means its endpoints, name, type, API tier, tags and
+body, none of which used to be visible anywhere.
 
 Every action applies to the subject:
 
@@ -73,7 +76,7 @@ edit key over it is the obvious move.
 
 | Key | Action |
 |---|---|
-| `h` / `l` | Switch focus between incoming and outgoing panels |
+| `h` / `l` | Move between the columns: incoming · the vertex · outgoing |
 | `j` / `↓`, `k` / `↑` | Move cursor |
 | `Enter` | Navigate to selected vertex; on a group header — toggle collapse |
 | `Tab` | Toggle collapse of the current link-type group |
@@ -95,10 +98,12 @@ edit key over it is the obvious move.
 anywhere. `q` quits while browsing and is an ordinary letter wherever there is
 a text field. Wherever `Tab` cycles something, the status bar says so.
 
-**Nothing is selected when you arrive.** The subject is the vertex, and no row
-in either panel is highlighted — a highlight is a claim about what the next key
-acts on, and until you walk into a list that claim would be false. `j`/`k` walk
-in, and walk back out again past either end.
+**The centre column is part of the focus cycle**, and that is what decides the
+subject. Standing on it means you are working with the vertex, and neither side
+panel is highlighted — an unfocused panel never highlights anything, so nothing
+on screen claims a link is selected when none is. `h`/`l` step one column at a
+time and clamp at the ends; step into a link panel and its first row is
+highlighted straight away, because there the claim is true.
 
 **The CRUD API is always stated** at the left of the status bar: `CRUD:
 high-level` or `CRUD: low-level`, switched with `x`. It governs create, edit

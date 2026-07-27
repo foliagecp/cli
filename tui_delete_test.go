@@ -24,6 +24,7 @@ func objectVertexLinks() []displayLink {
 
 func TestDelete_DOnLinkRowTargetsTheLink(t *testing.T) {
 	m := makeModel("root", threeLinks(), nil)
+	m.focus = panelOut
 	m.rCursor = 1 // first link row, below the group header
 
 	m = update(m, key("d"))
@@ -41,6 +42,7 @@ func TestDelete_DOnLinkRowTargetsTheLink(t *testing.T) {
 
 func TestDelete_DOnGroupHeaderTargetsTheVertex(t *testing.T) {
 	m := makeModel("hub/x", threeLinks(), nil)
+	m.focus = panelOut
 	m.rCursor = 0 // the group header, not a link
 
 	m = update(m, key("d"))
@@ -52,6 +54,7 @@ func TestDelete_DOnGroupHeaderTargetsTheVertex(t *testing.T) {
 
 func TestDelete_ShiftDAlwaysTargetsTheVertex(t *testing.T) {
 	m := makeModel("hub/x", threeLinks(), nil)
+	m.focus = panelOut
 	m.rCursor = 1 // sitting on a link
 
 	m = update(m, key("D"))
