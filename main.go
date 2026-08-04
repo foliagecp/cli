@@ -57,6 +57,8 @@ func main() {
 					return gWalkTUI()
 				},
 			},
+			graphCommand(),
+			cmdbCommand(),
 			{
 				Name:  "gwalk",
 				Usage: "traverse the graph",
@@ -222,7 +224,9 @@ func main() {
 		},
 	}
 
-	if err := app.Run(os.Args); err != nil {
+	// Let flags follow positional arguments ("create srv --body …"), which the
+	// flag package would otherwise stop parsing at. See reorderArgs.
+	if err := app.Run(reorderArgs(os.Args, app.Commands)); err != nil {
 		log.Fatal(err)
 	}
 }

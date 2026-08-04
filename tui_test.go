@@ -40,14 +40,18 @@ func makeVertexInfo(id string, outLinks, inLinks []linkId) fullVertexInfo {
 	}
 }
 
+// makeLinkInfo builds a link the way the FAST path does: target and type only.
+//
+// It used to fill body and tags as well, which no production path does — the
+// vertex read deliberately skips them. That made every test agree with a model
+// state the server never produces, and is why nothing caught the tags editor
+// opening blank over links that had tags. Details now come from linkDetails,
+// so a test that needs them says so explicitly.
 func makeLinkInfo(from, name, to, tp string) fullLinkInfo {
-	body := easyjson.NewJSONObject()
 	return fullLinkInfo{
-		id:   linkId{from: from, name: name},
-		body: body.GetPtr(),
-		to:   to,
-		tp:   tp,
-		tags: []string{},
+		id: linkId{from: from, name: name},
+		to: to,
+		tp: tp,
 	}
 }
 
@@ -58,8 +62,8 @@ func makeModel(currentID string, links []displayLink, fvi *fullVertexInfo) tuiMo
 	m.links = links
 	m.fvi = fvi
 	m.grouped = buildGroupedView(links, "")
-	m.rCursor = firstSelectableIdx(m.grouped.outFlat)
-	m.lCursor = firstSelectableIdx(m.grouped.inFlat)
+	m.rCursor = 0
+	m.lCursor = 0
 	m.width = 120
 	m.height = 40
 	m.ready = true
@@ -304,50 +308,24 @@ func TestNextSelectable_Backward(t *testing.T) {
 	}
 }
 
-func TestNextSelectable_WrapForward(t *testing.T) {
+func TestNextSelectable_WrapsWithinTheList(t *testing.T) {
 	flat := []flatItem{
 		{kind: flatTypeGroup},
 		{kind: flatLink},
 	}
-	got := nextSelectable(flat, 1, +1)
-	if got != 0 {
-		t.Errorf("from last going +1 should wrap to 0, got %d", got)
+	if got := nextSelectable(flat, 1, +1); got != 0 {
+		t.Errorf("past the last row should wrap to the first, got %d", got)
+	}
+	if got := nextSelectable(flat, 0, -1); got != 1 {
+		t.Errorf("before the first row should wrap to the last, got %d", got)
 	}
 }
 
-func TestNextSelectable_WrapBackward(t *testing.T) {
-	flat := []flatItem{
-		{kind: flatTypeGroup},
-		{kind: flatLink},
-	}
-	got := nextSelectable(flat, 0, -1)
-	if got != 1 {
-		t.Errorf("from 0 going -1 should wrap to last, got %d", got)
-	}
-}
+// ── nextSelectable ────────────────────────────────────────────────────────────
 
-func TestNextSelectable_Empty(t *testing.T) {
-	got := nextSelectable(nil, 0, +1)
-	if got != 0 {
-		t.Errorf("empty flat: want 0, got %d", got)
-	}
-}
-
-// ── firstSelectableIdx ────────────────────────────────────────────────────────
-
-func TestFirstSelectableIdx_ReturnsZero(t *testing.T) {
-	flat := []flatItem{
-		{kind: flatTypeGroup},
-		{kind: flatLink},
-	}
-	if got := firstSelectableIdx(flat); got != 0 {
+func TestNextSelectable_EmptyList(t *testing.T) {
+	if got := nextSelectable(nil, 0, +1); got != 0 {
 		t.Errorf("want 0, got %d", got)
-	}
-}
-
-func TestFirstSelectableIdx_Empty(t *testing.T) {
-	if got := firstSelectableIdx(nil); got != 0 {
-		t.Errorf("empty: want 0, got %d", got)
 	}
 }
 
@@ -565,10 +543,12 @@ func TestStripDomain(t *testing.T) {
 
 // ── Navigation: h/l panel switching ──────────────────────────────────────────
 
+// h and l now move one column at a time across three, so a single press from
+// the centre reaches a side panel and a second press clamps there.
 func TestNav_lFocusesOutgoing(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", mixedLinks(), &fvi)
-	m.focus = panelIn // start at incoming
+	m.focus = panelCenter
 
 	m = update(m, key("l"))
 	if m.focus != panelOut {
@@ -579,7 +559,7 @@ func TestNav_lFocusesOutgoing(t *testing.T) {
 func TestNav_hFocusesIncoming(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", mixedLinks(), &fvi)
-	m.focus = panelOut // start at outgoing
+	m.focus = panelCenter
 
 	m = update(m, key("h"))
 	if m.focus != panelIn {
@@ -590,7 +570,7 @@ func TestNav_hFocusesIncoming(t *testing.T) {
 func TestNav_ArrowLeftFocusesIncoming(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", mixedLinks(), &fvi)
-	m.focus = panelOut
+	m.focus = panelCenter
 
 	m = update(m, tea.KeyMsg{Type: tea.KeyLeft})
 	if m.focus != panelIn {
@@ -601,7 +581,7 @@ func TestNav_ArrowLeftFocusesIncoming(t *testing.T) {
 func TestNav_ArrowRightFocusesOutgoing(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", mixedLinks(), &fvi)
-	m.focus = panelIn
+	m.focus = panelCenter
 
 	m = update(m, tea.KeyMsg{Type: tea.KeyRight})
 	if m.focus != panelOut {
@@ -615,11 +595,11 @@ func TestNav_jMovesToFirstLink(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", threeLinks(), &fvi)
 	m.focus = panelOut
-	// rCursor starts at 0 (typeGroup header), j moves to first link
+	// Row 0 is the group header; j reaches the first link under it.
 	m = update(m, key("j"))
 	dl, isLink := m.cursorLink()
 	if !isLink {
-		t.Fatal("after j from typeGroup, cursor should be on a flatLink")
+		t.Fatal("j from the group header should reach a link")
 	}
 	if dl.label() != "l1" {
 		t.Errorf("first link should be l1 (alpha sort), got %q", dl.label())
@@ -630,10 +610,9 @@ func TestNav_kWrapsToLast(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", threeLinks(), &fvi)
 	m.focus = panelOut
-	// k from cursor=0 should wrap to last
 	m = update(m, key("k"))
 	if m.rCursor != len(m.grouped.outFlat)-1 {
-		t.Errorf("k from 0 should wrap to last item, got %d", m.rCursor)
+		t.Errorf("k from the first row should wrap to the last, got %d", m.rCursor)
 	}
 }
 
@@ -654,6 +633,7 @@ func TestNav_jjjWrapsAround(t *testing.T) {
 func TestNav_ArrowDown(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", threeLinks(), &fvi)
+	m.focus = panelOut
 	before := m.rCursor
 	m = update(m, tea.KeyMsg{Type: tea.KeyDown})
 	if m.rCursor == before {
@@ -666,8 +646,8 @@ func TestNav_EmptyFlat_NoPanic(t *testing.T) {
 	m := makeModel("root", nil, &fvi)
 	m = update(m, key("j"))
 	m = update(m, key("k"))
-	if m.rCursor < 0 {
-		t.Error("cursor should not go negative")
+	if m.rCursor != 0 {
+		t.Errorf("with no links the cursor stays at 0, got %d", m.rCursor)
 	}
 }
 
@@ -711,9 +691,8 @@ func TestNav_EnterOnTypeGroupCollapses(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", threeLinks(), &fvi)
 	m.focus = panelOut
-	// rCursor starts at 0 = typeGroup
 	if m.grouped.outFlat[m.rCursor].kind != flatTypeGroup {
-		t.Skip("cursor not on typeGroup, skipping")
+		t.Fatal("the first row should be a group header")
 	}
 	before := len(m.grouped.outFlat)
 
@@ -853,33 +832,17 @@ func TestNav_vTogglesRawBody(t *testing.T) {
 
 // ── Refresh ───────────────────────────────────────────────────────────────────
 
-func TestNav_rRefreshes(t *testing.T) {
+func TestNav_rReloads(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", threeLinks(), &fvi)
-	m.cache[m.currentID] = cachedVertex{fvi: m.fvi, links: m.links}
 	initialGen := m.loadGen
 
 	m = update(m, key("r"))
-	if _, ok := m.cache["root"]; ok {
-		t.Error("r should remove current vertex from cache")
-	}
 	if !m.loading {
 		t.Error("r should trigger loading")
 	}
 	if m.loadGen != initialGen+1 {
 		t.Errorf("r should increment loadGen: want %d, got %d", initialGen+1, m.loadGen)
-	}
-}
-
-func TestNav_CtrlRClearsCache(t *testing.T) {
-	fvi := makeVertexInfo("root", nil, nil)
-	m := makeModel("root", threeLinks(), &fvi)
-	m.cache["root"] = cachedVertex{fvi: m.fvi}
-	m.cache["child"] = cachedVertex{fvi: m.fvi}
-
-	m = update(m, tea.KeyMsg{Type: tea.KeyCtrlR})
-	if len(m.cache) != 0 {
-		t.Errorf("ctrl+r should clear entire cache, got %d entries", len(m.cache))
 	}
 }
 
@@ -1029,7 +992,6 @@ func TestMsg_LinksLoadedMsg_BuildsGroups(t *testing.T) {
 	if len(m.grouped.outGroups) != 2 {
 		t.Errorf("should have 2 out-groups (contains, depends), got %d", len(m.grouped.outGroups))
 	}
-	// rCursor should be at 0, which is a valid position in outFlat
 	if m.rCursor != 0 {
 		t.Errorf("rCursor should be 0 after load, got %d", m.rCursor)
 	}
@@ -1050,61 +1012,6 @@ func TestMsg_LinksLoadedMsg_Stale(t *testing.T) {
 	}
 	if len(m.links) != 0 {
 		t.Error("stale linksLoadedMsg should not update links")
-	}
-}
-
-func TestMsg_LinksLoadedMsg_CachesVertex(t *testing.T) {
-	fvi := makeVertexInfo("root", nil, nil)
-	m := makeModel("root", nil, &fvi)
-	m.loading = true
-	m.loadGen = 1
-	m.ready = true
-	m.bodyVP = viewport.New(40, 30)
-
-	links := []displayLink{
-		{info: makeLinkInfo("root", "l1", "c1", ""), isOut: true},
-	}
-	m = update(m, linksLoadedMsg{id: "root", gen: 1, links: links})
-
-	if _, ok := m.cache["root"]; !ok {
-		t.Error("linksLoadedMsg should cache the vertex")
-	}
-}
-
-func TestMsg_VertexLoadedMsg_SetsState(t *testing.T) {
-	m := newTuiModel("root")
-	m.width = 120
-	m.height = 40
-	m.ready = true
-	m.bodyVP = viewport.New(40, 30)
-	m.loading = true
-
-	fvi := makeVertexInfo("child", nil, nil)
-	links := []displayLink{
-		{info: makeLinkInfo("child", "l", "x", "t"), isOut: true},
-	}
-	m = update(m, vertexLoadedMsg{id: "child", fvi: &fvi, links: links})
-
-	if m.loading {
-		t.Error("should not be loading after vertexLoadedMsg")
-	}
-	if m.currentID != "child" {
-		t.Errorf("currentID: want child, got %q", m.currentID)
-	}
-	if len(m.links) != 1 {
-		t.Errorf("links: want 1, got %d", len(m.links))
-	}
-}
-
-func TestMsg_VertexLoadedMsg_Stale(t *testing.T) {
-	fvi := makeVertexInfo("root", nil, nil)
-	m := makeModel("root", nil, &fvi)
-	m.loadGen = 5
-
-	newFVI := makeVertexInfo("other", nil, nil)
-	m = update(m, vertexLoadedMsg{id: "other", gen: 2, fvi: &newFVI})
-	if m.currentID != "root" {
-		t.Error("stale vertexLoadedMsg should not change currentID")
 	}
 }
 
@@ -1149,7 +1056,7 @@ func TestLoadGen_IncrementedOnNavigate(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", threeLinks(), &fvi)
 	m.focus = panelOut
-	m = update(m, key("j")) // move to first link
+	m = update(m, key("j")) // onto the first link
 	gen := m.loadGen
 	m = update(m, keyEnter())
 	if m.loadGen != gen+1 {
@@ -1187,9 +1094,8 @@ func TestToggleCollapse_CursorStaysOnGroup(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", threeLinks(), &fvi)
 	m.focus = panelOut
-	// rCursor starts at 0 (flatTypeGroup)
 	if m.grouped.outFlat[m.rCursor].kind != flatTypeGroup {
-		t.Skip("cursor not on typeGroup initially")
+		t.Fatal("the first row should be a group header")
 	}
 	groupItem := m.grouped.outFlat[m.rCursor]
 
@@ -1453,15 +1359,33 @@ func TestView_ActivePanelBorderChanges(t *testing.T) {
 
 // ── Status bar ────────────────────────────────────────────────────────────────
 
+// The status bar is one line and there are now ~25 bindings, so it advertises
+// only the constantly-used ones plus the way to see the rest. Anything dropped
+// from here MUST be reachable through the help screen — that is asserted by
+// TestHelp_ListsEveryNavKey.
 func TestStatus_DefaultHints(t *testing.T) {
 	fvi := makeVertexInfo("root", nil, nil)
 	m := makeModel("root", nil, &fvi)
 
 	out := m.renderStatus()
-	for _, h := range []string{"jk", "Enter", "Tab", "b", "v", "q", "h/l"} {
+	for _, h := range []string{"jk", "Enter", "b", "n", "i", "d", "?"} {
 		if !strings.Contains(out, h) {
 			t.Errorf("default status bar should contain hint %q, got:\n%s", h, out)
 		}
+	}
+}
+
+func TestStatus_LinkHintReflectsPendingState(t *testing.T) {
+	fvi := makeVertexInfo("root", nil, nil)
+	m := makeModel("root", nil, &fvi)
+
+	if !strings.Contains(m.renderStatus(), "link") {
+		t.Error("the bar should advertise starting a link")
+	}
+
+	m.linking = &pendingLink{fromID: "hub/src"}
+	if !strings.Contains(m.renderStatus(), "commit") {
+		t.Errorf("with a link pending the bar should offer to commit it, got:\n%s", m.renderStatus())
 	}
 }
 
@@ -1490,40 +1414,61 @@ func TestStatus_SearchModeHints(t *testing.T) {
 // ── vertexKindBadge ───────────────────────────────────────────────────────────
 
 func TestBadge_TypeVertex(t *testing.T) {
-	fvi := makeVertexInfo("root", nil, nil)
+	// The defining edge is the types root pointing IN at the type. The old
+	// fixture had it pointing the wrong way and still passed, because the old
+	// classifier ignored direction — which is how hub/root came to be badged
+	// [type] and offered as a home for new objects.
+	fvi := makeVertexInfo("hub/srv", nil, nil)
 	links := []displayLink{
-		{info: makeLinkInfo("hub/types", "tl", "root", ""), isOut: false},
+		{info: makeLinkInfo("hub/types", "srv", "hub/srv", "__type"), isOut: false},
 	}
-	m := makeModel("root", links, &fvi)
+	m := makeModel("hub/srv", links, &fvi)
 
 	if !strings.Contains(m.vertexKindBadge(), "[type]") {
-		t.Error("vertex connected to hub/types should show [type] badge")
+		t.Errorf("a vertex the types root links to is a type, got %q", m.vertexKindBadge())
 	}
 }
 
-func TestBadge_ObjectVertex(t *testing.T) {
-	fvi := makeVertexInfo("root", nil, nil)
+func TestBadge_ObjectVertexNamesItsType(t *testing.T) {
+	fvi := makeVertexInfo("hub/srv-1", nil, nil)
 	links := []displayLink{
-		{info: makeLinkInfo("root", "mytype", "hub/objects", "__type"), isOut: true},
-		{info: makeLinkInfo("root", "myobj", "hub/objects", ""), isOut: true},
+		{info: makeLinkInfo("hub/objects", "hub/srv-1", "hub/srv-1", "__object"), isOut: false},
+		{info: makeLinkInfo("hub/srv-1", "type", "hub/srv", "__type"), isOut: true},
 	}
-	m := makeModel("root", links, &fvi)
+	m := makeModel("hub/srv-1", links, &fvi)
 
-	badge := m.vertexKindBadge()
-	// stripDomain removes the "hub/" prefix, so expect the stripped name.
-	if !strings.Contains(badge, "objects") {
-		t.Errorf("object vertex badge should reference type name, got %q", badge)
+	if badge := m.vertexKindBadge(); !strings.Contains(badge, "object of srv") {
+		t.Errorf("badge = %q, want it to name the type", badge)
 	}
 }
 
-func TestBadge_NoBadge(t *testing.T) {
-	fvi := makeVertexInfo("root", nil, nil)
+// TestBadge_RootIsBuiltInNotAType is the regression test for the complaint.
+// hub/root has an OUTGOING __types edge at hub/types; a type has an INCOMING
+// __type edge from it. One character and one direction apart.
+func TestBadge_RootIsBuiltInNotAType(t *testing.T) {
+	fvi := makeVertexInfo("hub/root", nil, nil)
 	links := []displayLink{
-		{info: makeLinkInfo("root", "l", "some/other", ""), isOut: true},
+		{info: makeLinkInfo("hub/root", "types", "hub/types", "__types"), isOut: true},
+		{info: makeLinkInfo("hub/root", "objects", "hub/objects", "__objects"), isOut: true},
 	}
-	m := makeModel("root", links, &fvi)
+	m := makeModel("hub/root", links, &fvi)
 
-	if badge := m.vertexKindBadge(); badge != "" {
-		t.Errorf("vertex without type/object links should have empty badge, got %q", badge)
+	if k, _ := m.vertexKind(); k != vkStructural {
+		t.Fatalf("hub/root classified as %v, want vkStructural", k)
+	}
+	if badge := m.vertexKindBadge(); strings.Contains(badge, "[type]") {
+		t.Errorf("hub/root badged %q — root is not a type", badge)
+	}
+}
+
+func TestBadge_PlainVertexStillSaysSo(t *testing.T) {
+	fvi := makeVertexInfo("hub/x", nil, nil)
+	links := []displayLink{
+		{info: makeLinkInfo("hub/x", "l", "some/other", ""), isOut: true},
+	}
+	m := makeModel("hub/x", links, &fvi)
+
+	if badge := m.vertexKindBadge(); !strings.Contains(badge, "[vertex]") {
+		t.Errorf("badge = %q — a plain vertex must say what it is, not go silent", badge)
 	}
 }

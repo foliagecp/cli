@@ -32,20 +32,6 @@ var (
 
 // ── Messages ──────────────────────────────────────────────────────────────────
 
-type vertexLoadedMsg struct {
-	id         string
-	gen        int
-	fvi        *fullVertexInfo
-	links      []displayLink
-	err        error
-	partialErr error
-}
-
-type cachedVertex struct {
-	fvi   *fullVertexInfo
-	links []displayLink
-}
-
 type vertexInfoMsg struct {
 	id  string
 	gen int
@@ -212,28 +198,59 @@ func linkForItemIn(groups []linkGroup, item flatItem) (displayLink, bool) {
 }
 
 // nextSelectable advances the cursor by dir (+1/-1), wrapping around the list.
+//
+// There is no "nothing selected" position: leaving the links is a move to the
+// centre column, not a cursor value. A highlight in an unfocused panel is
+// never drawn, so the cursor sitting on row 0 there claims nothing.
 func nextSelectable(flat []flatItem, from, dir int) int {
 	n := len(flat)
 	if n == 0 {
 		return 0
 	}
+	if from < 0 {
+		from = 0
+	}
 	return (from + dir + n) % n
-}
-
-// firstSelectableIdx returns 0; all items in a panel flat list are selectable.
-func firstSelectableIdx(flat []flatItem) int {
-	_ = flat
-	return 0
 }
 
 // ── Panel focus ────────────────────────────────────────────────────────────────
 
+// panelFocus says which of the three columns the user is in, and therefore
+// what they are working with.
+//
+// The centre column is part of the cycle, and that is what makes the highlight
+// honest. Focus on the centre means the subject is the vertex, and neither
+// side panel draws a highlight — a non-focused panel never has — so arriving
+// at a vertex no longer asserts that some link is selected. Step into a side
+// panel and its first row highlights, because there the claim is true.
+//
+// The order is the physical one: incoming, centre, outgoing. h and l move
+// between them and clamp at the ends rather than wrapping, because the mental
+// model is a position on screen, not a ring.
 type panelFocus int
 
 const (
-	panelOut panelFocus = iota // right panel — outgoing links (default)
-	panelIn                    // left panel — incoming links
+	panelIn     panelFocus = iota // left column — incoming links
+	panelCenter                   // middle column — the vertex itself (default)
+	panelOut                      // right column — outgoing links
 )
+
+// left and right move the focus one column, clamped.
+func (f panelFocus) left() panelFocus {
+	if f > panelIn {
+		return f - 1
+	}
+	return f
+}
+
+func (f panelFocus) right() panelFocus {
+	if f < panelOut {
+		return f + 1
+	}
+	return f
+}
+
+func (f panelFocus) onLinks() bool { return f == panelIn || f == panelOut }
 
 // ── Model ─────────────────────────────────────────────────────────────────────
 
@@ -269,6 +286,16 @@ type tuiModel struct {
 	searchMode  bool
 	searchInput textinput.Model
 	searchQuery string
+	// searchPrev is the filter in force when `f` was pressed, so Esc can put
+	// it back instead of destroying it.
+	searchPrev string
+
+	// gotoMode is the id prompt. Walking is the normal way to move, but a
+	// browser with no address bar means the only way back to a known vertex is
+	// to remember the path to it — and R, the one shortcut, also resets
+	// everything else.
+	gotoMode  bool
+	gotoInput textinput.Model
 
 	exportMode     bool
 	exportDepStep  bool // false = format selection, true = depth entry
@@ -276,12 +303,54 @@ type tuiModel struct {
 	exportDepthIdx int // index in exportDepthPresets
 	exportInput    textinput.Model
 
-	cache map[string]cachedVertex
-
 	outTypes2 []string
 	inTypes2  []string
 
 	rawBody bool
+
+	// form holds the active CRUD form, or nil. It is checked FIRST in the
+	// dispatch chain, so "a form is modal" is the semantics rather than a
+	// convention. Keeping it a single nullable field leaves every existing
+	// mode and every existing test untouched.
+	form *formState
+
+	// llMode forces the low-level API even on typed vertices — the escape
+	// hatch for inspecting or repairing graph state that the high-level API
+	// would refuse to express.
+	llMode bool
+
+	// restore carries view state across a reload; see tui_restore.go.
+	restore *viewRestore
+
+	// pendingNavAfterDelete is where to go once the in-flight delete of the
+	// current vertex succeeds. Decided before the delete, while the history is
+	// still intact.
+	pendingNavAfterDelete string
+
+	// linking is a link-in-progress: source chosen, target being walked to.
+	linking *pendingLink
+
+	// linkDetails caches the tags and body of edges the user has looked at.
+	// Keyed by (owner, name) — the address the API uses — so an edge is the
+	// same entry whichever of its two endpoints you are standing on.
+	linkDetails map[linkKey]linkDetail
+
+	// linkPeek is the edge the cursor is resting on, awaiting its debounce.
+	linkPeek linkKey
+
+	// bodyRegister holds a yanked body, offered as a template when creating
+	// or editing another entity. Navigating to a sibling, pressing y, and
+	// coming back is how "copy the body of an existing object" works without
+	// any extra API surface.
+	bodyRegister string
+
+	// helpOffset scrolls the keymap; it does not fit an 80x24 terminal and
+	// entries that run off the bottom may as well not exist.
+	helpOffset int
+
+	// helpOpen shows the full keymap. Checked before everything else, since
+	// the status bar can only advertise a handful of the bindings.
+	helpOpen bool
 
 	width  int
 	height int
@@ -289,11 +358,17 @@ type tuiModel struct {
 
 // ── Active-panel helpers ───────────────────────────────────────────────────────
 
+// The active* helpers describe the focused LINK panel. On the centre column
+// there is none, and they answer with nothing — which is what makes
+// cursorLink false there, and the subject the vertex.
 func (m tuiModel) activeFlat() []flatItem {
-	if m.focus == panelIn {
+	switch m.focus {
+	case panelIn:
 		return m.grouped.inFlat
+	case panelOut:
+		return m.grouped.outFlat
 	}
-	return m.grouped.outFlat
+	return nil
 }
 
 func (m tuiModel) activeCursorVal() int {
@@ -303,6 +378,9 @@ func (m tuiModel) activeCursorVal() int {
 	return m.rCursor
 }
 
+// linkPanelFocused reports whether a link panel owns the subject.
+func (m tuiModel) linkPanelFocused() bool { return m.focus.onLinks() }
+
 func (m tuiModel) activeOffsetVal() int {
 	if m.focus == panelIn {
 		return m.lOffset
@@ -311,25 +389,30 @@ func (m tuiModel) activeOffsetVal() int {
 }
 
 func (m tuiModel) activeGroups() []linkGroup {
-	if m.focus == panelIn {
+	switch m.focus {
+	case panelIn:
 		return m.grouped.inGroups
+	case panelOut:
+		return m.grouped.outGroups
 	}
-	return m.grouped.outGroups
+	return nil
 }
 
 func (m tuiModel) setActiveCursor(v int) tuiModel {
-	if m.focus == panelIn {
+	switch m.focus {
+	case panelIn:
 		m.lCursor = v
-	} else {
+	case panelOut:
 		m.rCursor = v
 	}
 	return m
 }
 
 func (m tuiModel) setActiveOffset(v int) tuiModel {
-	if m.focus == panelIn {
+	switch m.focus {
+	case panelIn:
 		m.lOffset = v
-	} else {
+	case panelOut:
 		m.rOffset = v
 	}
 	return m
@@ -350,10 +433,25 @@ func (m tuiModel) refreshBody() tuiModel {
 func (m tuiModel) cursorLink() (displayLink, bool) {
 	flat := m.activeFlat()
 	cursor := m.activeCursorVal()
-	if cursor >= len(flat) {
+	if cursor < 0 || cursor >= len(flat) {
 		return displayLink{}, false
 	}
 	return linkForItemIn(m.activeGroups(), flat[cursor])
+}
+
+// cursorGroup returns the group the cursor is on, when it is on a header.
+func (m tuiModel) cursorGroup() (linkGroup, bool) {
+	flat := m.activeFlat()
+	cursor := m.activeCursorVal()
+	if cursor < 0 || cursor >= len(flat) {
+		return linkGroup{}, false
+	}
+	item := flat[cursor]
+	groups := m.activeGroups()
+	if item.kind != flatTypeGroup || item.groupIdx >= len(groups) {
+		return linkGroup{}, false
+	}
+	return groups[item.groupIdx], true
 }
 
 // ── Constructor ───────────────────────────────────────────────────────────────
@@ -371,6 +469,12 @@ func newTuiModel(startID string) tuiModel {
 	si.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
 	si.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
 
+	gi := textinput.New()
+	gi.Placeholder = "vertex id…"
+	gi.CharLimit = 256
+	gi.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
+	gi.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
+
 	ei := textinput.New()
 	ei.Placeholder = "all"
 	ei.CharLimit = 6
@@ -383,8 +487,9 @@ func newTuiModel(startID string) tuiModel {
 		queryInput:  ti,
 		searchInput: si,
 		exportInput: ei,
-		cache:       make(map[string]cachedVertex),
-		focus:       panelOut,
+		gotoInput:   gi,
+		linkDetails: make(map[linkKey]linkDetail),
+		focus:       panelCenter,
 	}
 }
 
@@ -392,9 +497,9 @@ func gWalkTUI() error {
 	if err := gWalkLoad(); err != nil {
 		return err
 	}
-	startID := gWalkData.GetByPath("id").AsStringDefault("")
+	startID := canonID(gWalkData.GetByPath("id").AsStringDefault(""))
 	if startID == "" {
-		startID = "root"
+		startID = hubID("root")
 		_ = gWalkTo(startID)
 	}
 	p := tea.NewProgram(newTuiModel(startID), tea.WithAltScreen())
@@ -404,7 +509,12 @@ func gWalkTUI() error {
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 
+// fetchVertexCmd loads a vertex. It canonicalises the id first, and every id
+// the model stores flows from the msg it returns — so this is the choke point
+// that keeps m.currentID, m.history and the gwalk cursor file all speaking the
+// same form.
 func fetchVertexCmd(id string, gen int) tea.Cmd {
+	id = canonID(id)
 	return func() tea.Msg {
 		if err := initDBClient(); err != nil {
 			return vertexInfoMsg{id: id, gen: gen, err: err}
@@ -417,14 +527,25 @@ func fetchVertexCmd(id string, gen int) tea.Cmd {
 	}
 }
 
-func cacheHitCmd(id string, gen int, cv cachedVertex) tea.Cmd {
-	return func() tea.Msg {
-		return vertexLoadedMsg{id: id, gen: gen, fvi: cv.fvi, links: cv.links}
-	}
-}
-
 func fetchLinksCmd(id string, gen int, fvi *fullVertexInfo) tea.Cmd {
 	return func() tea.Msg {
+		// Fast path: the vertex read already carried every link's target and
+		// type, so there is nothing left to fetch. This is the difference
+		// between one request and one-per-link — and every mutation triggers a
+		// refresh, so on a type vertex with thousands of instances the fan-out
+		// would dominate. Link bodies and tags are not needed here (the list
+		// view never shows them) and are read lazily when an editor opens.
+		if len(fvi.outFull)+len(fvi.inFull) == len(fvi.outLinks)+len(fvi.inLinks) {
+			links := make([]displayLink, 0, len(fvi.outFull)+len(fvi.inFull))
+			for _, fli := range fvi.outFull {
+				links = append(links, displayLink{info: fli, isOut: true})
+			}
+			for _, fli := range fvi.inFull {
+				links = append(links, displayLink{info: fli, isOut: false})
+			}
+			return linksLoadedMsg{id: id, gen: gen, links: links}
+		}
+
 		type result struct {
 			dl  displayLink
 			err error
@@ -735,7 +856,11 @@ var (
 
 	styleErr     = lipgloss.NewStyle().Foreground(colorErr)
 	styleLoading = lipgloss.NewStyle().Foreground(colorLoading)
-	styleSearch  = lipgloss.NewStyle().Background(lipgloss.Color("226")).Foreground(lipgloss.Color("16"))
+
+	// CRUD feedback: applied vs. a mode that destroys data if misread.
+	styleOk     = lipgloss.NewStyle().Foreground(colorOut)
+	styleWarn   = lipgloss.NewStyle().Bold(true).Foreground(colorIn)
+	styleSearch = lipgloss.NewStyle().Background(lipgloss.Color("226")).Foreground(lipgloss.Color("16"))
 )
 
 // ── Dimensions ────────────────────────────────────────────────────────────────
@@ -783,8 +908,10 @@ func (m tuiModel) centerContentW() int {
 	return w
 }
 
+// breadcrumbH also reserves the row for the pending-link banner, which lives
+// there even with no history.
 func (m tuiModel) breadcrumbH() int {
-	if len(m.history) > 0 {
+	if len(m.history) > 0 || m.linking != nil {
 		return 1
 	}
 	return 0
@@ -820,4 +947,22 @@ func (m tuiModel) vpHeight() int {
 		h = 1
 	}
 	return h
+}
+
+// displayLinksOf builds the link list from a vertex read, the same way
+// fetchLinksCmd's fast path does. ok is false when the runtime did not return
+// the structured form, in which case the links are not classifiable without a
+// per-link fan-out.
+func displayLinksOf(fvi fullVertexInfo) ([]displayLink, bool) {
+	if len(fvi.outFull)+len(fvi.inFull) != len(fvi.outLinks)+len(fvi.inLinks) {
+		return nil, false
+	}
+	links := make([]displayLink, 0, len(fvi.outFull)+len(fvi.inFull))
+	for _, fli := range fvi.outFull {
+		links = append(links, displayLink{info: fli, isOut: true})
+	}
+	for _, fli := range fvi.inFull {
+		links = append(links, displayLink{info: fli, isOut: false})
+	}
+	return links, true
 }

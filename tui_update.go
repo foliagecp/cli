@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -24,6 +25,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.bodyVP.Width = m.vpWidth()
 			m.bodyVP.Height = m.vpHeight()
+			// The key-value body bakes the width into the string, so it has to
+			// be re-rendered rather than just re-sized.
+			m = m.refreshBody()
+		}
+		if m.form != nil {
+			if ed := m.form.jsonField(); ed != nil {
+				ed.setSize(m.editorSizeFor(m.form.nonJSONRows()))
+			}
 		}
 		return m, nil
 
@@ -34,42 +43,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.outTypes2 = msg.outTypes
 		m.inTypes2 = msg.inTypes
 		return m, nil
-
-	case vertexLoadedMsg:
-		if msg.gen != m.loadGen {
-			return m, nil
-		}
-		m.loading = false
-		m.linksTotal = 0
-		if msg.err != nil {
-			m.errMsg = msg.err.Error()
-			return m, nil
-		}
-		m.errMsg = ""
-		if msg.partialErr != nil {
-			m.errMsg = msg.partialErr.Error()
-		}
-		m.currentID = msg.id
-		m.fvi = msg.fvi
-		m.links = msg.links
-		m.outTypes2 = nil
-		m.inTypes2 = nil
-		m.grouped = buildGroupedView(msg.links, m.searchQuery)
-		m.rCursor = 0
-		m.lCursor = 0
-		m.rOffset = 0
-		m.lOffset = 0
-		m = m.refreshBody()
-		if m.ready {
-			m.bodyVP.GotoTop()
-		}
-		if err := gWalkTo(msg.id); err != nil {
-			if m.errMsg != "" {
-				m.errMsg += "; "
-			}
-			m.errMsg += "persist failed: " + err.Error()
-		}
-		return m, fetchDepth2TypesCmd(m.loadGen, m.links)
 
 	case vertexInfoMsg:
 		if msg.gen != m.loadGen {
@@ -86,6 +59,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentID = msg.id
 		m.fvi = msg.fvi
 		m.links = nil
+		// Edge details belong to the vertex that was on screen. Carrying them
+		// across a load is the same staleness as carrying the link list.
+		m = m.forgetLinkDetails()
 		m.outTypes2 = nil
 		m.inTypes2 = nil
 		m.grouped = groupedView{}
@@ -100,7 +76,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.linksTotal == 0 {
 			m.loading = false
-			m.cache[msg.id] = cachedVertex{fvi: m.fvi, links: nil}
 			if err := gWalkTo(msg.id); err != nil {
 				m.errMsg = "persist failed: " + err.Error()
 			}
@@ -116,15 +91,23 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.linksTotal = 0
 		m.links = msg.links
 		m.grouped = buildGroupedView(msg.links, m.searchQuery)
-		m.rCursor = 0
-		m.lCursor = 0
-		m.rOffset = 0
-		m.lOffset = 0
+		if m.restore != nil {
+			// Put the user back where they were standing. This never ran: the
+			// snapshot was taken on the post-mutation refresh, but only the
+			// CACHE-HIT handler consulted it — and a refresh deliberately
+			// bypasses the cache. So every edit bounced the cursor to the top
+			// of the list, and the stale snapshot was then applied to whatever
+			// unrelated vertex was next served from cache.
+			m = applyRestore(m, m.restore)
+			m.restore = nil
+		} else {
+			m.rCursor = 0
+			m.lCursor = 0
+			m.rOffset = 0
+			m.lOffset = 0
+		}
 		if msg.partialErr != nil {
 			m.errMsg = msg.partialErr.Error()
-		}
-		if m.fvi != nil && msg.partialErr == nil {
-			m.cache[msg.id] = cachedVertex{fvi: m.fvi, links: msg.links}
 		}
 		m = m.refreshBody()
 		if err := gWalkTo(msg.id); err != nil {
@@ -133,7 +116,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.errMsg += "persist failed: " + err.Error()
 		}
-		return m, fetchDepth2TypesCmd(m.loadGen, m.links)
+		m, peek := m.peekCursorLink()
+		return m, tea.Batch(fetchDepth2TypesCmd(m.loadGen, m.links), peek)
 
 	case queryResultMsg:
 		if msg.gen != m.loadGen {
@@ -164,16 +148,79 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queryResult = styleDim.Render("✓ saved → " + msg.file)
 		}
 		return m, nil
+
+	case linkPeekMsg:
+		return m.applyLinkPeek(msg)
+
+	case linkDetailMsg:
+		if msg.gen != m.loadGen {
+			return m, nil
+		}
+		return m.applyLinkDetail(msg), nil
+
+	case mutationResultMsg:
+		// Never gen-guarded: the write already happened on the server, so
+		// dropping this would hide the outcome AND the cache invalidation.
+		return m.applyMutationResult(msg)
+
+	case editorDoneMsg:
+		// Likewise unguarded — the user's edit exists and must not vanish.
+		if msg.err != nil {
+			m.queryResult = styleErr.Render("editor: " + msg.err.Error())
+			return m, nil
+		}
+		ed := (*jsonEditor)(nil)
+		if m.form != nil {
+			ed = m.form.jsonField()
+		}
+		if ed == nil {
+			// The form was closed while the editor ran. Say so rather than
+			// swallowing the text — a silently discarded edit is worse than
+			// a discarded edit the user knows about.
+			m.queryResult = styleDim.Render("editor result discarded (form closed)")
+			return m, nil
+		}
+		ed.ta.SetValue(msg.text)
+		ed.validate()
+		f := m.form.validate()
+		m.form = &f
+		return m, nil
 	}
 
-	if m.queryMode {
+	// ctrl+c quits from every mode, without exception. It used to quit in two
+	// of them, close in three, and in search fall through into the text input
+	// — so the one key every terminal program shares could not be relied on.
+	if kMsg, isKey := msg.(tea.KeyMsg); isKey && kMsg.String() == "ctrl+c" {
+		return m, tea.Quit
+	}
+
+	switch m.mode() {
+	case modeHelp:
+		if kMsg, isKey := msg.(tea.KeyMsg); isKey {
+			switch kMsg.String() {
+			case "j", "down":
+				m.helpOffset++
+			case "k", "up":
+				if m.helpOffset > 0 {
+					m.helpOffset--
+				}
+			default:
+				m.helpOpen = false
+			}
+		}
+		return m, nil
+	case modeForm:
+		return m.updateForm(msg)
+	case modeQuery:
 		return m.updateQuery(msg)
-	}
-	if m.searchMode {
+	case modeSearch:
 		return m.updateSearch(msg)
-	}
-	if m.exportMode {
+	case modeExport:
 		return m.updateExport(msg)
+	case modeGoto:
+		return m.updateGoto(msg)
+	case modeResults:
+		return m.updateNavQueryResults(msg)
 	}
 	return m.updateNav(msg)
 }
@@ -181,33 +228,25 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // ── Normal navigation ─────────────────────────────────────────────────────────
 
 func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if len(m.queryResults) > 0 {
-		return m.updateNavQueryResults(msg)
-	}
-
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "q":
 			return m, tea.Quit
 
-		case "j", "down":
-			flat := m.activeFlat()
-			if len(flat) > 0 {
-				m = m.setActiveCursor(nextSelectable(flat, m.activeCursorVal(), +1))
-				m = m.clampScroll()
-				m.queryResult = ""
+		case "j", "down", "k", "up":
+			dir := +1
+			if msg.String() == "k" || msg.String() == "up" {
+				dir = -1
 			}
-			return m, nil
-
-		case "k", "up":
 			flat := m.activeFlat()
-			if len(flat) > 0 {
-				m = m.setActiveCursor(nextSelectable(flat, m.activeCursorVal(), -1))
-				m = m.clampScroll()
-				m.queryResult = ""
+			if len(flat) == 0 {
+				return m, nil
 			}
-			return m, nil
+			m = m.setActiveCursor(nextSelectable(flat, m.activeCursorVal(), dir))
+			m = m.clampScroll()
+			m.queryResult = ""
+			return m.peekCursorLink()
 
 		case "enter":
 			if m.loading {
@@ -215,7 +254,7 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			flat := m.activeFlat()
 			cursor := m.activeCursorVal()
-			if cursor >= len(flat) {
+			if cursor < 0 || cursor >= len(flat) {
 				return m, nil
 			}
 			item := flat[cursor]
@@ -225,19 +264,8 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !ok {
 					return m, nil
 				}
-				target := dl.target()
-				if target == "" {
-					return m, nil
-				}
-				m.history = append(m.history, m.currentID)
 				m.queryResult = ""
-				m.loadGen++
-				if cv, ok := m.cache[target]; ok {
-					return m, cacheHitCmd(target, m.loadGen, cv)
-				}
-				m.loading = true
-				m.linksTotal = 0
-				return m, fetchVertexCmd(target, m.loadGen)
+				return m.navigateTo(dl.target())
 			case flatTypeGroup:
 				m = m.toggleCollapse(item)
 			}
@@ -246,7 +274,7 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tab":
 			flat := m.activeFlat()
 			cursor := m.activeCursorVal()
-			if cursor >= len(flat) {
+			if cursor < 0 || cursor >= len(flat) {
 				return m, nil
 			}
 			item := flat[cursor]
@@ -265,25 +293,19 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "h", "left":
-			m.focus = panelIn
-			return m, nil
+			m.focus = m.focus.left()
+			return m.peekCursorLink()
 
 		case "l", "right":
-			m.focus = panelOut
-			return m, nil
+			m.focus = m.focus.right()
+			return m.peekCursorLink()
 
 		case "b", "backspace":
 			if len(m.history) > 0 {
 				prev := m.history[len(m.history)-1]
 				m.history = m.history[:len(m.history)-1]
 				m.queryResult = ""
-				m.loadGen++
-				if cv, ok := m.cache[prev]; ok {
-					return m, cacheHitCmd(prev, m.loadGen, cv)
-				}
-				m.loading = true
-				m.linksTotal = 0
-				return m, fetchVertexCmd(prev, m.loadGen)
+				return m.jumpTo(prev)
 			}
 			return m, nil
 
@@ -292,6 +314,144 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.refreshBody()
 			if m.ready {
 				m.bodyVP.GotoTop()
+			}
+			return m, nil
+
+		case "i":
+			// Edit the SUBJECT — the vertex on the centre column, the selected
+			// link in a side one. There is no key that means "the vertex
+			// regardless": the column IS the selector, and a second way to say
+			// it would be a second answer to the question the columns exist to
+			// answer. Refused while a load is in
+			// flight: the form snapshots the body at open time, and there is
+			// no point snapshotting one that is about to be replaced.
+			if m.loading {
+				m.queryResult = styleDim.Render("still loading…")
+				return m, nil
+			}
+			return m.openSubjectEditor(m.subject(), "body")
+
+		case "L":
+			if m.loading {
+				m.queryResult = styleDim.Render("still loading…")
+				return m, nil
+			}
+			// L is the LINK key, and what it does follows the same rule as
+			// everything else — what is the subject.
+			//
+			//   a link is pending   → commit it here (the banner says so)
+			//   a link is selected  → edit that link
+			//   otherwise           → start a link from this vertex
+			//
+			// The commit case wins while something is pending because the
+			// banner has been promising it across every keystroke since; the
+			// cursor happening to rest on a link row must not change what the
+			// screen said it would do.
+			if m.linking != nil {
+				f, refusal := openLinkCreateForm(m)
+				if refusal != "" {
+					m.queryResult = styleDim.Render(refusal)
+					return m, nil
+				}
+				m.form = &f
+				m.queryResult = ""
+				return m, nil
+			}
+			if subj := m.subject(); subj.kind == subjLink {
+				return m.openSubjectEditor(subj, "body")
+			}
+			kind, tp := m.vertexKind()
+			m.linking = &pendingLink{fromID: m.currentID, kind: kind, typeName: tp}
+			m.queryResult = ""
+			return m, nil
+
+		case "n":
+			if m.loading {
+				m.queryResult = styleDim.Render("still loading…")
+				return m, nil
+			}
+			f := openCreateMenu(m)
+			m.form = &f
+			m.queryResult = ""
+			return m, nil
+
+		case "t":
+			// The same editor as `i`, landing on the tags row. Kept as its own
+			// key because it was already documented as "edit the link's tags"
+			// and that promise still holds exactly — what changed is that the
+			// tags shown are now the real ones.
+			if m.loading {
+				m.queryResult = styleDim.Render("still loading…")
+				return m, nil
+			}
+			subj := m.subject()
+			if subj.kind != subjLink {
+				m.queryResult = styleDim.Render("tags belong to links — pick one in a side column")
+				return m, nil
+			}
+			return m.openSubjectEditor(subj, "tags")
+
+		case "y":
+			subj := m.subject()
+			if subj.kind == subjNone {
+				m.queryResult = styleDim.Render(m.noSubjectHint())
+				return m, nil
+			}
+			body, ok := m.bodyOfSubject(subj)
+			if !ok {
+				m.queryResult = styleDim.Render("nothing to yank")
+				return m, nil
+			}
+			m.bodyRegister = prettyJSON(body)
+			m.queryResult = styleDim.Render("yanked body of " + m.subjectLabel(subj))
+			return m, nil
+
+		case "d":
+			if m.loading {
+				m.queryResult = styleDim.Render("still loading…")
+				return m, nil
+			}
+			// Deletes the SUBJECT, on the same rule as `i`.
+			switch subj := m.subject(); subj.kind {
+			case subjLink:
+				if refusal := crudRefusesLink(m.llMode, m.tierOfSubjectLink(subj.link)); refusal != "" {
+					m.queryResult = styleErr.Render(refusal)
+					return m, nil
+				}
+				f := openDeleteLinkForm(m, subj.link)
+				m.form = &f
+				m.queryResult = ""
+				return m, nil
+			case subjNone:
+				m.queryResult = styleDim.Render(m.noSubjectHint())
+				return m, nil
+			}
+			f, refusal := openDeleteVertexForm(m)
+			if refusal != "" {
+				m.queryResult = styleErr.Render(refusal)
+				return m, nil
+			}
+			m.form = &f
+			m.queryResult = ""
+			return m, nil
+
+		case "?":
+			m.helpOpen = true
+			m.helpOffset = 0
+			m.queryResult = ""
+			return m, nil
+
+		case "x":
+			// Which API the CRUD keys use. Session state, and shown in both
+			// positions in the status bar, so the default is a stated choice
+			// rather than an unlabelled one.
+			m.llMode = !m.llMode
+			if m.llMode {
+				m.queryResult = styleDim.Render(
+					"CRUD switched to the low-level API — raw vertices and links, no CMDB semantics")
+			} else {
+				m.queryResult = styleDim.Render(
+					"CRUD switched to the high-level API — types, objects and their links")
 			}
 			return m, nil
 
@@ -318,13 +478,25 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.exportInput.SetValue("")
 			return m, nil
 
+		case ":":
+			m.gotoMode = true
+			m.gotoInput.SetValue("")
+			m.gotoInput.Focus()
+			return m, textinput.Blink
+
 		case "f":
 			m.searchMode = true
+			m.searchPrev = m.searchQuery
 			m.searchInput.SetValue(m.searchQuery)
 			m.searchInput.Focus()
 			return m, textinput.Blink
 
 		case "esc":
+			if m.linking != nil {
+				m.linking = nil
+				m.queryResult = styleDim.Render("link cancelled")
+				return m, nil
+			}
 			if m.searchQuery != "" {
 				m.searchQuery = ""
 				m.searchInput.SetValue("")
@@ -338,15 +510,10 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "r":
-			delete(m.cache, m.currentID)
-			m.loading = true
-			m.linksTotal = 0
-			m.queryResult = ""
-			m.loadGen++
-			return m, fetchVertexCmd(m.currentID, m.loadGen)
-
-		case "ctrl+r":
-			m.cache = make(map[string]cachedVertex)
+			// Reload where you are standing. Navigation already fetches, so
+			// this is for the case navigation cannot cover: somebody else
+			// changed the graph while you stood still.
+			m = m.forgetLinkDetails()
 			m.loading = true
 			m.linksTotal = 0
 			m.queryResult = ""
@@ -354,6 +521,7 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, fetchVertexCmd(m.currentID, m.loadGen)
 
 		case "R":
+			m.linking = nil
 			m.queryResult = ""
 			m.queryResults = nil
 			m.errMsg = ""
@@ -366,7 +534,7 @@ func (m tuiModel) updateNav(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loadGen++
 			m.loading = true
 			m.linksTotal = 0
-			return m, fetchVertexCmd("root", m.loadGen)
+			return m, fetchVertexCmd(hubID("root"), m.loadGen)
 
 		case "g":
 			m.bodyVP.HalfPageUp()
@@ -418,7 +586,7 @@ func (m tuiModel) updateQuery(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "esc", "ctrl+c":
+		case "esc":
 			m.queryMode = false
 			m.queryInput.Blur()
 			m.queryInput.SetValue("")
@@ -448,16 +616,14 @@ func (m tuiModel) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc":
+			// Cancel the edit, restoring the filter that was active when `f`
+			// was pressed. It used to DESTROY the filter — even though `f`
+			// deliberately pre-seeds the input with it, so the one thing Esc
+			// could not do was leave things as they were found.
 			m.searchMode = false
 			m.searchInput.Blur()
 			m.searchInput.SetValue("")
-			m.searchQuery = ""
-			m.grouped = buildGroupedView(m.links, "")
-			m.rCursor = 0
-			m.lCursor = 0
-			m.rOffset = 0
-			m.lOffset = 0
-			m = m.refreshBody()
+			m = m.applySearch(m.searchPrev)
 			return m, nil
 		case "enter":
 			m.searchQuery = m.searchInput.Value()
@@ -468,14 +634,214 @@ func (m tuiModel) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.searchInput, cmd = m.searchInput.Update(msg)
-	m.searchQuery = m.searchInput.Value()
-	m.grouped = buildGroupedView(m.links, m.searchQuery)
+	return m.applySearch(m.searchInput.Value()), cmd
+}
+
+// applySearch sets the live filter and rebuilds what depends on it.
+func (m tuiModel) applySearch(q string) tuiModel {
+	m.searchQuery = q
+	m.grouped = buildGroupedView(m.links, q)
 	m.rCursor = 0
 	m.lCursor = 0
 	m.rOffset = 0
 	m.lOffset = 0
-	m = m.refreshBody()
-	return m, cmd
+	return m.refreshBody()
+}
+
+// ── Form mode ─────────────────────────────────────────────────────────────────
+
+func (m tuiModel) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
+	kMsg, isKey := msg.(tea.KeyMsg)
+	if !isKey {
+		// Cursor blink and the like belong to the widget.
+		if ed := m.form.editor(); ed != nil {
+			var cmd tea.Cmd
+			ed.ta, cmd = ed.ta.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+	}
+
+	// The create menu is a letter-accelerator list, not a field form: a
+	// keystroke picks an entry outright.
+	if m.form.kind == formCreateMenu {
+		return m.updateCreateMenu(kMsg)
+	}
+
+	f, action := m.form.handleKey(kMsg.String())
+	m.form = &f
+
+	switch action {
+	case actClose:
+		m.form = nil
+		return m, nil
+	case actSubmit:
+		// Deleting the vertex we are standing on must move us somewhere alive.
+		// gWalkTo persists the current id on every successful load, so staying
+		// put would leave a dead id in $FOLIAGE_CLI_DIR/gwalk and the NEXT
+		// launch of `tui` (and `gwalk inspect`) would fail to load at all.
+		// Decided here, before the delete, while the history is still intact.
+		if f.kind == formDeleteVertex && f.ctx.fromID == m.currentID {
+			m.pendingNavAfterDelete, m.history = destinationAfterDelete(f.ctx, m.history)
+		}
+		return m, submitFormCmd(f)
+	case actOpenEditor:
+		if ed := f.jsonField(); ed != nil {
+			return m, openEditorCmd(ed.ta.Value())
+		}
+		return m, nil
+	}
+
+	// Not consumed by the state machine: it belongs to the focused widget.
+	if ed := f.editor(); ed != nil {
+		var cmd tea.Cmd
+		ed.ta, cmd = ed.ta.Update(msg)
+		ed.validate()
+		vf := f.validate()
+		m.form = &vf
+		return m, cmd
+	}
+	return m, nil
+}
+
+// navigateTo walks to a vertex, pushing the current one onto the history.
+//
+// This is the ONE way to move. There used to be four copies of it — Enter on a
+// link, `b`, the create menu and the query-result list each open-coded the same
+// six lines — and they disagreed about the id form, so the same vertex could
+// end up cached twice under `srv` and `hub/srv`.
+func (m tuiModel) navigateTo(id string) (tuiModel, tea.Cmd) {
+	id = canonID(id)
+	if id == "" || id == m.currentID {
+		return m, nil
+	}
+	m.history = append(m.history, m.currentID)
+	// Deliberately does NOT clear the toast: several callers set one that
+	// explains why they are moving you (the create menu says where types live
+	// before taking you there), and clearing here would erase the explanation
+	// in the same keystroke that earns it. Callers that want a clean slate
+	// clear it themselves.
+	return m.jumpTo(id)
+}
+
+// jumpTo loads a vertex without touching the history — for going back, and for
+// landing on something just created.
+func (m tuiModel) jumpTo(id string) (tuiModel, tea.Cmd) {
+	id = canonID(id)
+	if id == "" {
+		return m, nil
+	}
+	m.loadGen++
+	m.loading = true
+	m.linksTotal = 0
+	return m, fetchVertexCmd(id, m.loadGen)
+}
+
+// updateCreateMenu turns a letter into the form it names.
+func (m tuiModel) updateCreateMenu(kMsg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	k := kMsg.String()
+	if k == "esc" || k == "q" {
+		m.form = nil
+		return m, nil
+	}
+
+	for _, e := range createMenuFor(m) {
+		if e.key != k {
+			continue
+		}
+		if !e.available() {
+			m.form = nil
+			m.queryResult = styleDim.Render(e.why)
+			if e.unavailableAt == "" {
+				// Blocked by the armed API rather than by location — there is
+				// nowhere to go, only a key to press, and the reason says so.
+				return m, nil
+			}
+			// Rather than refusing, take the user where the action lives. The
+			// menu already said where that is; going there makes the rule
+			// concrete instead of theoretical.
+			return m.navigateTo(e.unavailableAt)
+		}
+		var f formState
+		switch e.kind {
+		case formVertexCreate:
+			f = openVertexCreateForm(m)
+		case formTypeCreate:
+			f = openTypeCreateForm(m)
+		case formObjectCreate:
+			f = openObjectCreateForm(m)
+		case formSubTypeSet:
+			f = openSubTypeForm(m)
+		case formLinkCreate:
+			lf, refusal := openLinkCreateForm(m)
+			if refusal != "" {
+				m.form.err = refusal
+				return m, nil
+			}
+			f = lf
+		default:
+			return m, nil
+		}
+		m.form = &f
+		return m, nil
+	}
+	return m, nil
+}
+
+// applyMutationResult folds a completed mutation back into the model: report
+// it, and reload or move on.
+func (m tuiModel) applyMutationResult(msg mutationResultMsg) (tea.Model, tea.Cmd) {
+	m.form = nil
+	m.queryResult = toastFor(msg)
+
+	navTo := msg.navTo
+	if m.pendingNavAfterDelete != "" {
+		// Only an APPLIED delete moves you off the vertex. A no-op delete —
+		// the vertex was already gone — used to walk you away and pop the
+		// history exactly as a real one would, so "nothing happened" and "it
+		// is gone" were indistinguishable from the outside.
+		if msg.res.status == opApplied {
+			navTo = m.pendingNavAfterDelete
+		}
+		m.pendingNavAfterDelete = ""
+	}
+
+	if msg.res.status == opFailed {
+		// Failures also go to the header, which persists until the next
+		// successful load — a cursor move must not wipe the reason.
+		m.errMsg = msg.res.details
+		return m, nil
+	}
+	m.errMsg = ""
+
+	// A pending link is cleared when it was committed, or when its source
+	// really did go away. Committing used to clear NOTHING, so the banner sat
+	// there promising a commit that had already happened — and every later L
+	// meant "commit again" instead of whatever it should have meant.
+	if msg.clearPending && msg.res.status != opFailed {
+		m.linking = nil
+	}
+	if msg.clearLinkIf != "" && msg.res.status == opApplied &&
+		m.linking != nil && m.linking.fromID == msg.clearLinkIf {
+		m.linking = nil
+	}
+
+	if navTo != "" {
+		m.loadGen++
+		m.loading = true
+		m.linksTotal = 0
+		return m, fetchVertexCmd(navTo, m.loadGen)
+	}
+
+	if msg.refresh {
+		// Keep the user where they were standing across the reload.
+		m.restore = captureRestore(m)
+		m.loadGen++
+		m.loading = true
+		m.linksTotal = 0
+		return m, fetchVertexCmd(m.currentID, m.loadGen)
+	}
+	return m, nil
 }
 
 // ── Export mode ───────────────────────────────────────────────────────────────
@@ -497,9 +863,6 @@ func (m tuiModel) updateExport(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ── Step 1: format selection ──────────────────────────────────────
 		n := len(exportFmts)
 		switch key {
-		case "ctrl+c":
-			m.exportMode = false
-			return m, nil
 		case "esc":
 			m.exportMode = false
 			return m, nil
@@ -519,12 +882,6 @@ func (m tuiModel) updateExport(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── Step 2: depth entry ───────────────────────────────────────────────
 	switch key {
-	case "ctrl+c":
-		m.exportMode = false
-		m.exportDepStep = false
-		m.exportInput.Blur()
-		m.exportInput.SetValue("")
-		return m, nil
 	case "esc":
 		// back to format step
 		m.exportDepStep = false
@@ -569,7 +926,7 @@ func (m tuiModel) updateNavQueryResults(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "q":
 			return m, tea.Quit
 		case "j", "down":
 			if len(m.queryResults) > 0 {
@@ -587,17 +944,7 @@ func (m tuiModel) updateNavQueryResults(msg tea.Msg) (tea.Model, tea.Cmd) {
 			target := m.queryResults[m.qCursor]
 			m.queryResults = nil
 			m.queryResult = ""
-			if target == m.currentID {
-				return m, nil
-			}
-			m.history = append(m.history, m.currentID)
-			m.loadGen++
-			if cv, ok := m.cache[target]; ok {
-				return m, cacheHitCmd(target, m.loadGen, cv)
-			}
-			m.loading = true
-			m.linksTotal = 0
-			return m, fetchVertexCmd(target, m.loadGen)
+			return m.navigateTo(target)
 		case "esc", "b", "backspace":
 			m.queryResults = nil
 			m.queryResult = ""
@@ -650,4 +997,116 @@ func (m tuiModel) clampQueryScroll() tuiModel {
 		m.qOffset = m.qCursor - visible + 1
 	}
 	return m
+}
+
+// openSubjectEditor opens the editor for whatever the cursor is on.
+//
+// The link case cannot open synchronously: the vertex read that fills the link
+// panels deliberately skips tags and bodies, so a form built from the model
+// would show blanks over real data — and a REPLACE submit would then destroy
+// what the user was never shown. It waits for the detail read instead, and
+// says so.
+func (m tuiModel) openSubjectEditor(subj subject, focusKey string) (tuiModel, tea.Cmd) {
+	if subj.kind == subjNone {
+		m.queryResult = styleDim.Render(m.noSubjectHint())
+		return m, nil
+	}
+	if subj.kind == subjLink {
+		if refusal := crudRefusesLink(m.llMode, m.tierOfSubjectLink(subj.link)); refusal != "" {
+			m.queryResult = styleErr.Render(refusal)
+			return m, nil
+		}
+	}
+	if subj.kind == subjLink {
+		f, refusal := openLinkEditForm(m, subj.link, focusKey)
+		if refusal != "" {
+			m.queryResult = styleDim.Render(refusal)
+			// Nothing has been read for this edge yet — ask for it now rather
+			// than telling the user to press the key again.
+			if _, known := m.linkDetails[keyOf(subj.link)]; !known {
+				return m.applyLinkPeek(linkPeekMsg{key: keyOf(subj.link), gen: m.loadGen})
+			}
+			return m, nil
+		}
+		m.form = &f
+		m.queryResult = ""
+		return m, textarea.Blink
+	}
+
+	kind, _ := m.vertexKind()
+	if refusal := crudRefusesVertex(m.llMode, kind, m.currentID); refusal != "" {
+		m.queryResult = styleErr.Render(refusal)
+		return m, nil
+	}
+	f, ok := openBodyEditForm(m)
+	if !ok {
+		m.queryResult = styleDim.Render("nothing to edit here")
+		return m, nil
+	}
+	m.form = &f
+	m.queryResult = ""
+	return m, textarea.Blink
+}
+
+// updateGoto handles the id prompt.
+//
+// A graph browser with no address bar means the only way to a vertex you can
+// name is to remember the path there — and R, the sole shortcut, resets the
+// history, the filter and any pending link along with it. This is the one
+// place where typing an id is the right interface rather than a failure of it.
+func (m tuiModel) updateGoto(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if kMsg, isKey := msg.(tea.KeyMsg); isKey {
+		switch kMsg.String() {
+		case "esc":
+			m.gotoMode = false
+			m.gotoInput.Blur()
+			return m, nil
+		case "tab":
+			// Complete to the next structural destination. They are the ids
+			// worth having a shortcut to and the ones hardest to remember the
+			// path back to.
+			m.gotoInput.SetValue(nextGotoSuggestion(m.gotoInput.Value()))
+			m.gotoInput.CursorEnd()
+			return m, nil
+		case "enter":
+			id := strings.TrimSpace(m.gotoInput.Value())
+			m.gotoMode = false
+			m.gotoInput.Blur()
+			if id == "" {
+				return m, nil
+			}
+			if err := validateID("vertex", id); err != nil {
+				m.queryResult = styleErr.Render(err.Error())
+				return m, nil
+			}
+			m.queryResult = ""
+			return m.navigateTo(id)
+		}
+	}
+	var cmd tea.Cmd
+	m.gotoInput, cmd = m.gotoInput.Update(msg)
+	return m, cmd
+}
+
+// gotoSuggestions are the structural vertices, offered because they are the
+// destinations a user most often wants and least often remembers a route to.
+var gotoSuggestions = []string{"root", "types", "objects", "trash_can", "group", "nav"}
+
+func nextGotoSuggestion(cur string) string {
+	cur = strings.TrimSpace(cur)
+	for i, s := range gotoSuggestions {
+		if s == cur || canonID(s) == cur {
+			return gotoSuggestions[(i+1)%len(gotoSuggestions)]
+		}
+	}
+	// Not on the list: start the cycle, unless the user is part-way through
+	// typing one of them, in which case jump to the first match.
+	if cur != "" {
+		for _, s := range gotoSuggestions {
+			if strings.HasPrefix(s, cur) {
+				return s
+			}
+		}
+	}
+	return gotoSuggestions[0]
 }
